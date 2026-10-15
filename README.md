@@ -17,6 +17,7 @@
 </p>
 
 <p align="center">
+  <a href="#-download"><b>Download</b></a> ·
   <a href="#-features">Features</a> ·
   <a href="#-getting-started">Getting started</a> ·
   <a href="#-how-it-works">How it works</a> ·
@@ -89,6 +90,12 @@ Most "free" editors give you a watermark, a subscription or an upload to someone
 | 🔗 **Import from a link** | Paste a link and Ccut downloads and imports the media with `yt-dlp` (desktop app). Only use it for content you have the rights to. |
 | 😀 **Stickers, icons & fonts** | 1,500+ Fluent emoji, the Phosphor icon set and 80 bundled font families, all available offline. |
 | 🎞️ **Everything a timeline needs** | Multi-track editing, ripple and snapping, split, speed and retime, masks, scenes, bookmarks, and MP4/WebM export. |
+
+## 📥 Download
+
+**Windows:** grab the installer (`Ccut.Setup.exe`) or the portable zip from the [latest release](https://github.com/Msh4i/ccut/releases/latest). It is a pre-release that is not yet code-signed, so SmartScreen may ask you to click **More info → Run anyway**.
+
+**Linux:** build the AppImage from source (see below). Prebuilt Linux downloads are coming.
 
 ## 🚀 Getting started
 
