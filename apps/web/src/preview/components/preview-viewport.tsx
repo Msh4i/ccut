@@ -33,6 +33,9 @@ interface PreviewViewportContextValue {
 	sceneLeft: number;
 	sceneTop: number;
 	sceneWidth: number;
+	/** The visible preview area, overlay px (the overlay layer clips what lies outside it). */
+	viewportWidth: number;
+	viewportHeight: number;
 	zoomPercent: number;
 	canvasToOverlay: ({
 		canvasX,
@@ -512,6 +515,8 @@ export function usePreviewViewportState({
 			sceneLeft,
 			sceneTop,
 			sceneWidth,
+			viewportWidth,
+			viewportHeight,
 			zoomPercent,
 			canvasToOverlay: canvasToOverlayWithViewport,
 			fitToScreen,
@@ -539,6 +544,8 @@ export function usePreviewViewportState({
 			sceneLeft,
 			sceneTop,
 			sceneWidth,
+			viewportWidth,
+			viewportHeight,
 			zoomPercent,
 			canvasToOverlayWithViewport,
 			fitToScreen,

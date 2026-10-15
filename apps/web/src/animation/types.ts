@@ -16,6 +16,19 @@ export const ANIMATION_PROPERTY_PATHS = [
 	"background.offsetX",
 	"background.offsetY",
 	"background.cornerRadius",
+	// 3D layer transform (`scene3d/layer-params.ts`, LAYER_3D_KEYS)
+	"transform3d.positionX",
+	"transform3d.positionY",
+	"transform3d.positionZ",
+	"transform3d.orientationX",
+	"transform3d.orientationY",
+	"transform3d.orientationZ",
+	"transform3d.rotationX",
+	"transform3d.rotationY",
+	"transform3d.rotationZ",
+	"transform3d.scaleX",
+	"transform3d.scaleY",
+	"transform3d.scaleZ",
 ] as const;
 
 export type AnimationPropertyPath = (typeof ANIMATION_PROPERTY_PATHS)[number];

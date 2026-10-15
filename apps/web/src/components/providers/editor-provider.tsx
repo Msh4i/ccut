@@ -8,7 +8,14 @@ import { useEditor } from "@/editor/use-editor";
 import { useKeybindingsListener } from "@/actions/use-keybindings";
 import { useKeybindingsStore } from "@/actions/keybindings-store";
 import { useTimelineStore } from "@/timeline/timeline-store";
+import { installCameraPinController } from "@/tracking/camera/controller";
+import { installCameraTrackerEngine } from "@/tracking/camera3d/engine/install";
+import { solveCamera } from "@/tracking/camera3d/solver/solve-camera";
 import { useEditorActions } from "@/actions/use-editor-actions";
+import { McpHost } from "@/mcp/mcp-host";
+import { SmartCutoutHost } from "@/background/smart-cutout/smart-cutout-host";
+import { BrushHost } from "@/background/brush/brush-host";
+import { PlaybackWarmupHost } from "@/core/playback-warmup-host";
 import { loadFontAtlas } from "@/fonts/google-fonts";
 import {
 	initializeGpuRenderer,
@@ -137,6 +144,18 @@ function EditorRuntimeBindings() {
 		editor.command.isRippleEnabled = rippleEditingEnabled;
 	}, [editor, rippleEditingEnabled]);
 
+	// "Stick to scene": the engine and its analysis cache live as long as this
+	// editor session; the teardown stops a running analysis and unregisters.
+	useEffect(() => installCameraPinController({ editor }), [editor]);
+
+	// "Track Camera": the engine lives as long as this editor session. The
+	// solver is injected; the integration replaces the placeholder with the
+	// real `solveCamera` (tracking/camera3d/solver).
+	useEffect(
+		() => installCameraTrackerEngine({ editor, solveCamera }),
+		[editor],
+	);
+
 	useEffect(() => {
 		const handleBeforeUnload = (event: BeforeUnloadEvent) => {
 			if (!editor.save.getIsDirty()) return;
@@ -150,5 +169,12 @@ function EditorRuntimeBindings() {
 
 	useEditorActions();
 	useKeybindingsListener();
-	return null;
+	return (
+		<>
+			<McpHost />
+			<PlaybackWarmupHost />
+			<SmartCutoutHost />
+			<BrushHost />
+		</>
+	);
 }

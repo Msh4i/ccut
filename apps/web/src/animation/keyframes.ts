@@ -344,7 +344,13 @@ function upsertDiscreteChannelKey({
 				value,
 			});
 			return normalizeDiscreteChannel({
-				channel: { keys },
+				channel: {
+					keys: keys.filter(
+						(key, index) =>
+							index === existingIndex ||
+							!isNearlySameTime({ leftTime: key.time, rightTime: time }),
+					),
+				},
 			});
 		}
 	}
@@ -410,9 +416,15 @@ function upsertScalarChannelKey({
 							}
 						: keys[existingIndex],
 			});
+			// The key written by id moves here; another key already on this tick
+			// is replaced by it, so a channel never holds two keys on one tick.
 			return normalizeScalarChannel({
 				channel: {
-					keys,
+					keys: keys.filter(
+						(key, index) =>
+							index === existingIndex ||
+							!isNearlySameTime({ leftTime: key.time, rightTime: time }),
+					),
 					extrapolation: normalizedChannel.extrapolation,
 				},
 			});

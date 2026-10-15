@@ -14,6 +14,11 @@ export interface StickerSearchResult {
 	items: StickerItem[];
 	total: number;
 	hasMore: boolean;
+	/**
+	 * Set when the catalog could not be loaded. That is not "no matches": the
+	 * picker shows the message and a Retry button instead of an empty result.
+	 */
+	error?: string;
 }
 
 export interface StickerBrowseSection {
@@ -22,6 +27,8 @@ export interface StickerBrowseSection {
 	items: StickerItem[];
 	hasMore?: boolean;
 	layout?: "grid" | "row";
+	/** The provider behind this section could not be loaded (items is empty). */
+	error?: string;
 	action?: {
 		type: "see-all";
 		category?: StickerCategory;
@@ -31,6 +38,8 @@ export interface StickerBrowseSection {
 
 export interface StickerBrowseResult {
 	sections: StickerBrowseSection[];
+	/** Set when the catalog of a single category could not be loaded. */
+	error?: string;
 }
 
 export interface StickerProviderSearchOptions {
@@ -68,4 +77,15 @@ export interface StickerProvider {
 		stickerId: string;
 		options?: StickerResolveOptions;
 	}): string;
+	/**
+	 * The display name of a sticker when only its id is known (the "Recently
+	 * used" row). Must be the name the provider's own tiles carry, so a sticker
+	 * has one name wherever it is added from. null when the id is not one of
+	 * this provider's; must not throw.
+	 */
+	describeSticker?({
+		stickerId,
+	}: {
+		stickerId: string;
+	}): Promise<string | null>;
 }

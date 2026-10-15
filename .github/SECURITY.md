@@ -1,28 +1,20 @@
 # Security Policy
 
-## Supported Versions
+## Supported versions
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 1.x.x   | :white_check_mark: |
+Only the latest commit on `main` is supported.
 
-## Reporting a Vulnerability
+## Reporting a vulnerability
 
-We take security vulnerabilities seriously. If you discover a security vulnerability within OpenCut, please send an email to security@opencut.app. All security vulnerabilities will be promptly addressed.
+Please **do not** open a public issue for security problems. Report them privately through GitHub instead: open the [Security tab](https://github.com/Msh4i/ccut/security) of this repository and choose **Report a vulnerability**.
 
-Please do not report security vulnerabilities through public GitHub issues.
+Please include:
 
-### What to include in your report
+- a description of the vulnerability
+- steps to reproduce it
+- its potential impact
+- a suggested fix, if you have one
 
-- Description of the vulnerability
-- Steps to reproduce
-- Potential impact
-- Any suggested fixes
+Ccut is a community project maintained in spare time, so replies may take a few days. Thank you for helping keep Ccut and its users safe.
 
-### Response timeline
-
-- We will acknowledge receipt within 48 hours
-- We will provide a detailed response within 5 business days
-- We will keep you updated on our progress
-
-Thank you for helping keep OpenCut secure!
+Ccut is built on [OpenCut](https://github.com/opencut-app/opencut-classic). If a problem also affects OpenCut itself, please tell the OpenCut team as well.

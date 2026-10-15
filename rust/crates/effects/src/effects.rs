@@ -1,3 +1,4 @@
+mod pass_resources;
 mod pipeline;
 mod types;
 

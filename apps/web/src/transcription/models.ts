@@ -19,7 +19,7 @@ export const TRANSCRIPTION_MODELS: TranscriptionModel[] = [
 	{
 		id: "whisper-medium",
 		name: "Medium",
-		huggingFaceId: "onnx-community/whisper-medium",
+		huggingFaceId: "onnx-community/whisper-medium-ONNX", // "onnx-community/whisper-medium" yok (HTTP 401)
 		description: "Higher accuracy, slower",
 	},
 	{

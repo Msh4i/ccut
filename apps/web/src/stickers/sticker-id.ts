@@ -1,3 +1,5 @@
+import { describeId } from "./describe-id";
+
 export function parseStickerId({ stickerId }: { stickerId: string }): {
 	providerId: string;
 	providerValue: string;
@@ -6,6 +8,9 @@ export function parseStickerId({ stickerId }: { stickerId: string }): {
 	if (!normalizedStickerId) {
 		throw new Error("Sticker ID must be a non-empty string");
 	}
+	if (normalizedStickerId !== stickerId) {
+		throw new Error(`Sticker ID must not have surrounding whitespace: "${describeId({ value: stickerId })}"`);
+	}
 
 	const separatorIndex = normalizedStickerId.indexOf(":");
 	if (
@@ -13,12 +18,17 @@ export function parseStickerId({ stickerId }: { stickerId: string }): {
 		separatorIndex === normalizedStickerId.length - 1
 	) {
 		throw new Error(
-			`Invalid sticker ID format: "${stickerId}". Expected "provider:value".`,
+			`Invalid sticker ID format: "${describeId({ value: stickerId })}". Expected "provider:value".`,
 		);
 	}
 
-	const providerId = normalizedStickerId.slice(0, separatorIndex).trim();
-	const providerValue = normalizedStickerId.slice(separatorIndex + 1).trim();
+	const providerId = normalizedStickerId.slice(0, separatorIndex);
+	const providerValue = normalizedStickerId.slice(separatorIndex + 1);
+	if (providerId !== providerId.trim() || providerValue !== providerValue.trim()) {
+		throw new Error(
+			`Sticker ID must not have whitespace around its parts: "${describeId({ value: stickerId })}"`,
+		);
+	}
 
 	return { providerId, providerValue };
 }

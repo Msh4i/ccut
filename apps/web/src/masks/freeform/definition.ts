@@ -38,6 +38,7 @@ import {
 const PERCENTAGE_DISPLAY = {
 	displayMultiplier: 100,
 	step: 1,
+	unitLabel: "percent",
 } as const;
 
 const FREEFORM_PATH_MASK_PARAMS: ParamDefinition<keyof FreeformPathMaskParams & string>[] = [
@@ -67,6 +68,7 @@ const FREEFORM_PATH_MASK_PARAMS: ParamDefinition<keyof FreeformPathMaskParams & 
 		min: 0,
 		max: 360,
 		step: 1,
+		unitLabel: "degrees",
 	},
 	{
 		key: "scale",
@@ -75,6 +77,7 @@ const FREEFORM_PATH_MASK_PARAMS: ParamDefinition<keyof FreeformPathMaskParams & 
 		default: 1,
 		min: 1,
 		max: 500,
+		slider: { min: 1, max: 500, pivot: 100 },
 		...PERCENTAGE_DISPLAY,
 	},
 ];

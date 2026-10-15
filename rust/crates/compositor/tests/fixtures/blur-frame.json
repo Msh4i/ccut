@@ -1,0 +1,63 @@
+{
+	"width": 16,
+	"height": 9,
+	"clear": {
+		"color": [
+			0,
+			0,
+			0,
+			1
+		]
+	},
+	"items": [
+		{
+			"type": "layer",
+			"textureId": "root:0:source",
+			"transform": {
+				"centerX": 8,
+				"centerY": 4.5,
+				"width": 12,
+				"height": 9,
+				"rotationDegrees": 0,
+				"flipX": false,
+				"flipY": false
+			},
+			"opacity": 1,
+			"blendMode": "normal",
+			"effectPassGroups": [
+				[
+					{
+						"shader": "gaussian-blur",
+						"uniforms": {
+							"u_sigma": 3,
+							"u_step": 1,
+							"u_direction": [
+								1,
+								0
+							]
+						}
+					}
+				]
+			],
+			"mask": null
+		},
+		{
+			"type": "sceneEffect",
+			"effectPassGroups": [
+				[
+					{
+						"shader": "gaussian-blur",
+						"uniforms": {
+							"u_sigma": 3,
+							"u_step": 1,
+							"u_direction": [
+								1,
+								0
+							]
+						}
+					}
+				]
+			]
+		}
+	]
+}

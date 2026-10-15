@@ -1,20 +1,29 @@
+import { SMART_CUTOUT_ENABLED_KEY } from "@/background/matte/matte-registry";
 import type {
 	ParamDefinition,
 	ParamValue,
 	ParamValues,
 } from "@/params";
 import { MIN_TRANSFORM_SCALE } from "@/animation/transform";
+import type { NumberSliderSpec } from "@/params/slider";
 import type { BlendMode } from "@/rendering";
 import type {
 	ElementType,
 	TimelineElement,
 } from "@/timeline";
 import { DEFAULTS } from "@/timeline/defaults";
+import { CHROMA_KEY_DEFAULTS } from "@/background/chroma-key";
 import { VOLUME_DB_MAX, VOLUME_DB_MIN } from "@/timeline/audio-constants";
 import {
 	CORNER_RADIUS_MAX,
 	CORNER_RADIUS_MIN,
 } from "@/text/background";
+import {
+	LAYER_3D_DEFAULTS,
+	LAYER_3D_ENABLED_KEY,
+	LAYER_3D_KEYS,
+	type Layer3DKey,
+} from "@/scene3d/layer-params";
 
 export type ElementParamDefinition<TKey extends string = string> =
 	ParamDefinition<TKey> & {
@@ -63,7 +72,8 @@ export class DefinitionRegistry<TKey extends string, TDefinition> {
 	get(key: TKey): TDefinition {
 		const def = this.definitions.get(key);
 		if (!def) {
-			throw new Error(`Unknown ${this.entityName}: ${key}`);
+			// An id from a saved project can be any length: cut it for the message.
+			throw new Error(`Unknown ${this.entityName}: ${String(key).slice(0, 80)}`);
 		}
 		return def;
 	}
@@ -93,6 +103,12 @@ const BLEND_MODE_OPTIONS: Array<{ value: BlendMode; label: string }> = [
 	{ value: "luminosity", label: "Luminosity" },
 ];
 
+const SCALE_SLIDER: NumberSliderSpec = {
+	min: MIN_TRANSFORM_SCALE,
+	max: 5,
+	pivot: 1,
+};
+
 const visualElementParams: ElementParamDefinition[] = [
 	{
 		key: "transform.positionX",
@@ -101,6 +117,7 @@ const visualElementParams: ElementParamDefinition[] = [
 		default: DEFAULTS.element.transform.position.x,
 		min: -100_000,
 		step: 1,
+		slider: { min: -1920, max: 1920 },
 	},
 	{
 		key: "transform.positionY",
@@ -109,6 +126,7 @@ const visualElementParams: ElementParamDefinition[] = [
 		default: DEFAULTS.element.transform.position.y,
 		min: -100_000,
 		step: 1,
+		slider: { min: -1080, max: 1080 },
 	},
 	{
 		key: "transform.scaleX",
@@ -117,6 +135,7 @@ const visualElementParams: ElementParamDefinition[] = [
 		default: DEFAULTS.element.transform.scaleX,
 		min: MIN_TRANSFORM_SCALE,
 		step: 0.01,
+		slider: SCALE_SLIDER,
 	},
 	{
 		key: "transform.scaleY",
@@ -125,6 +144,7 @@ const visualElementParams: ElementParamDefinition[] = [
 		default: DEFAULTS.element.transform.scaleY,
 		min: MIN_TRANSFORM_SCALE,
 		step: 0.01,
+		slider: SCALE_SLIDER,
 	},
 	{
 		key: "transform.rotate",
@@ -134,6 +154,7 @@ const visualElementParams: ElementParamDefinition[] = [
 		min: -360,
 		max: 360,
 		step: 1,
+		unitLabel: "degrees",
 	},
 	{
 		key: "opacity",
@@ -163,6 +184,7 @@ const audioElementParams: ElementParamDefinition[] = [
 		min: VOLUME_DB_MIN,
 		max: VOLUME_DB_MAX,
 		step: 0.01,
+		unitLabel: "dB",
 	},
 	{
 		key: "muted",
@@ -195,6 +217,7 @@ const textElementParams: ElementParamDefinition[] = [
 		default: 15,
 		min: 1,
 		step: 1,
+		slider: { min: 1, max: 100 },
 	},
 	{
 		key: "color",
@@ -255,6 +278,7 @@ const textElementParams: ElementParamDefinition[] = [
 		default: DEFAULTS.text.letterSpacing,
 		min: -100,
 		step: 0.1,
+		slider: { min: -20, max: 50 },
 	},
 	{
 		key: "lineHeight",
@@ -263,6 +287,7 @@ const textElementParams: ElementParamDefinition[] = [
 		default: DEFAULTS.text.lineHeight,
 		min: 0.1,
 		step: 0.1,
+		slider: { min: 0.5, max: 3 },
 	},
 	{
 		key: "background.enabled",
@@ -295,6 +320,7 @@ const textElementParams: ElementParamDefinition[] = [
 		default: DEFAULTS.text.background.paddingX,
 		min: 0,
 		step: 1,
+		slider: { min: 0, max: 200 },
 		dependencies: [{ param: "background.enabled", equals: true }],
 	},
 	{
@@ -304,6 +330,7 @@ const textElementParams: ElementParamDefinition[] = [
 		default: DEFAULTS.text.background.paddingY,
 		min: 0,
 		step: 1,
+		slider: { min: 0, max: 200 },
 		dependencies: [{ param: "background.enabled", equals: true }],
 	},
 	{
@@ -313,6 +340,7 @@ const textElementParams: ElementParamDefinition[] = [
 		default: DEFAULTS.text.background.offsetX,
 		min: -100_000,
 		step: 1,
+		slider: { min: -200, max: 200 },
 		dependencies: [{ param: "background.enabled", equals: true }],
 	},
 	{
@@ -322,9 +350,161 @@ const textElementParams: ElementParamDefinition[] = [
 		default: DEFAULTS.text.background.offsetY,
 		min: -100_000,
 		step: 1,
+		slider: { min: -200, max: 200 },
 		dependencies: [{ param: "background.enabled", equals: true }],
 	},
 ];
+
+/**
+ * World positions of a tracked scene have no fixed scale (the solve picks
+ * one), so a slider bar would mean nothing: the field scrubs instead.
+ */
+const LAYER_3D_POSITION_LIMIT = 1_000_000;
+/** Degrees, wide enough for every angle `mat3ToEulerDeg` returns. */
+const LAYER_3D_ANGLE_LIMIT = 360;
+const LAYER_3D_SCALE_SLIDER: NumberSliderSpec = { min: 0, max: 5, pivot: 1 };
+
+function layer3DNumberParam({
+	key,
+	label,
+}: {
+	key: Layer3DKey;
+	label: string;
+}): ElementParamDefinition {
+	const base = { key, label, type: "number" as const, default: LAYER_3D_DEFAULTS[key] };
+	if (key.startsWith("transform3d.position")) {
+		return {
+			...base,
+			min: -LAYER_3D_POSITION_LIMIT,
+			max: LAYER_3D_POSITION_LIMIT,
+			step: 0.01,
+			slider: false,
+		};
+	}
+	if (key.startsWith("transform3d.scale")) {
+		// negative scale mirrors the layer, as in After Effects
+		return { ...base, min: -100, max: 100, step: 0.001, slider: LAYER_3D_SCALE_SLIDER };
+	}
+	return {
+		...base,
+		min: -LAYER_3D_ANGLE_LIMIT,
+		max: LAYER_3D_ANGLE_LIMIT,
+		step: 0.1,
+		unitLabel: "degrees",
+	};
+}
+
+/**
+ * AE's 3D layer switch and 3D transform (`scene3d/layer-params.ts`). Shown
+ * in the properties panel's own 3D tab, never in the 2D Transform tab
+ * (that tab lists its keys explicitly).
+ */
+/** Colour key ("chroma key") of a picture clip: see `background/chroma-key.ts`. */
+const chromaKeyElementParams: ElementParamDefinition[] = [
+	{
+		key: "chromaKey.enabled",
+		label: "Chroma key",
+		type: "boolean",
+		default: CHROMA_KEY_DEFAULTS.enabled,
+		keyframable: false,
+	},
+	{
+		key: "chromaKey.color",
+		label: "Key color",
+		type: "color",
+		default: CHROMA_KEY_DEFAULTS.color,
+		dependencies: [{ param: "chromaKey.enabled", equals: true }],
+	},
+	{
+		key: "chromaKey.tolerance",
+		label: "Tolerance",
+		type: "number",
+		default: CHROMA_KEY_DEFAULTS.tolerance,
+		min: 0,
+		max: 100,
+		step: 1,
+		slider: { min: 0, max: 100 },
+		dependencies: [{ param: "chromaKey.enabled", equals: true }],
+	},
+	{
+		key: "chromaKey.softness",
+		label: "Edge softness",
+		type: "number",
+		default: CHROMA_KEY_DEFAULTS.softness,
+		min: 0,
+		max: 100,
+		step: 1,
+		slider: { min: 0, max: 100 },
+		dependencies: [{ param: "chromaKey.enabled", equals: true }],
+	},
+	{
+		key: "chromaKey.spill",
+		label: "Spill removal",
+		type: "number",
+		default: CHROMA_KEY_DEFAULTS.spill,
+		min: 0,
+		max: 100,
+		step: 1,
+		slider: { min: 0, max: 100 },
+		dependencies: [{ param: "chromaKey.enabled", equals: true }],
+	},
+	{
+		key: "chromaKey.invert",
+		label: "Invert",
+		type: "boolean",
+		default: CHROMA_KEY_DEFAULTS.invert,
+		keyframable: false,
+		dependencies: [{ param: "chromaKey.enabled", equals: true }],
+	},
+];
+
+/** Smart (AI) cutout switch of a video clip; the "Smart cutout" section of the Background tab sets it. */
+const smartCutoutElementParams: ElementParamDefinition[] = [
+	{
+		key: SMART_CUTOUT_ENABLED_KEY,
+		label: "Smart cutout",
+		type: "boolean",
+		default: false,
+		keyframable: false,
+	},
+];
+
+export const CHROMA_KEY_PARAM_LIST: readonly string[] = chromaKeyElementParams.map(
+	(param) => param.key,
+);
+
+const layer3DElementParams: ElementParamDefinition[] = [
+	{
+		key: LAYER_3D_ENABLED_KEY,
+		label: "3D Layer",
+		type: "boolean",
+		default: false,
+		keyframable: false,
+	},
+	layer3DNumberParam({ key: LAYER_3D_KEYS.positionX, label: "Position X" }),
+	layer3DNumberParam({ key: LAYER_3D_KEYS.positionY, label: "Position Y" }),
+	layer3DNumberParam({ key: LAYER_3D_KEYS.positionZ, label: "Position Z" }),
+	layer3DNumberParam({ key: LAYER_3D_KEYS.orientationX, label: "Orientation X" }),
+	layer3DNumberParam({ key: LAYER_3D_KEYS.orientationY, label: "Orientation Y" }),
+	layer3DNumberParam({ key: LAYER_3D_KEYS.orientationZ, label: "Orientation Z" }),
+	layer3DNumberParam({ key: LAYER_3D_KEYS.rotationX, label: "Rotation X" }),
+	layer3DNumberParam({ key: LAYER_3D_KEYS.rotationY, label: "Rotation Y" }),
+	layer3DNumberParam({ key: LAYER_3D_KEYS.rotationZ, label: "Rotation Z" }),
+	layer3DNumberParam({ key: LAYER_3D_KEYS.scaleX, label: "Scale X" }),
+	layer3DNumberParam({ key: LAYER_3D_KEYS.scaleY, label: "Scale Y" }),
+	layer3DNumberParam({ key: LAYER_3D_KEYS.scaleZ, label: "Scale Z" }),
+];
+
+/** The param keys of a 3D layer, in the order the 3D tab lists them. */
+export const LAYER_3D_PARAM_KEYS: readonly string[] = layer3DElementParams.map(
+	(param) => param.key,
+);
+
+const LAYER_3D_PARAM_KEY_SET = new Set(LAYER_3D_PARAM_KEYS);
+
+export function isLayer3DParamKey({ key }: { key: string }): boolean {
+	return LAYER_3D_PARAM_KEY_SET.has(key);
+}
 
 export const elementParamRegistry = new DefinitionRegistry<
 	ElementType,
@@ -333,20 +513,40 @@ export const elementParamRegistry = new DefinitionRegistry<
 
 elementParamRegistry.register({
 	key: "video",
-	definition: [...visualElementParams, ...audioElementParams],
+	definition: [
+		...visualElementParams,
+		...chromaKeyElementParams,
+		...smartCutoutElementParams,
+		...audioElementParams,
+	],
 });
-elementParamRegistry.register({ key: "image", definition: visualElementParams });
+elementParamRegistry.register({
+	key: "image",
+	definition: [
+		...visualElementParams,
+		...chromaKeyElementParams,
+		...layer3DElementParams,
+	],
+});
 elementParamRegistry.register({
 	key: "text",
-	definition: [...textElementParams, ...visualElementParams],
+	definition: [
+		...textElementParams,
+		...visualElementParams,
+		...layer3DElementParams,
+	],
 });
 elementParamRegistry.register({
 	key: "sticker",
-	definition: visualElementParams,
+	definition: [
+		...visualElementParams,
+		...chromaKeyElementParams,
+		...layer3DElementParams,
+	],
 });
 elementParamRegistry.register({
 	key: "graphic",
-	definition: visualElementParams,
+	definition: [...visualElementParams, ...layer3DElementParams],
 });
 elementParamRegistry.register({ key: "audio", definition: audioElementParams });
 elementParamRegistry.register({ key: "effect", definition: [] });

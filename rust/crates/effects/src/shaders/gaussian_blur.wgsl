@@ -5,8 +5,9 @@ struct VertexOutput {
 
 struct EffectUniforms {
     resolution: vec2f,
-    direction: vec2f,
-    scalars: vec4f,
+    extra: vec2f,
+    scalars_a: vec4f,
+    scalars_b: vec4f,
 }
 
 @group(0) @binding(0) var input_texture: texture_2d<f32>;
@@ -16,8 +17,9 @@ struct EffectUniforms {
 @fragment
 fn fragment_main(input: VertexOutput) -> @location(0) vec4f {
     let texel_size = vec2f(1.0, 1.0) / uniforms.resolution;
-    let sigma = uniforms.scalars.x;
-    let step_size = uniforms.scalars.y;
+    let sigma = uniforms.scalars_a.x;
+    let step_size = uniforms.scalars_a.y;
+    let direction = uniforms.extra;
 
     var color = vec4f(0.0, 0.0, 0.0, 0.0);
     var total_weight = 0.0;
@@ -25,8 +27,8 @@ fn fragment_main(input: VertexOutput) -> @location(0) vec4f {
     for (var index = -30; index <= 30; index = index + 1) {
         let position = f32(index) * step_size;
         let weight = exp(-(position * position) / (2.0 * sigma * sigma));
-        let sample_uv = input.tex_coord + (texel_size * uniforms.direction * position);
-        color = color + textureSample(input_texture, input_sampler, sample_uv) * weight;
+        let sample_uv = input.tex_coord + (texel_size * direction * position);
+        color = color + textureSampleLevel(input_texture, input_sampler, sample_uv, 0.0) * weight;
         total_weight = total_weight + weight;
     }
 

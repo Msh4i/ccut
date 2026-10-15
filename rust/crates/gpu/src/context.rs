@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex, PoisonError};
+
 use wgpu::util::DeviceExt;
 
 #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
@@ -6,7 +8,47 @@ use std::cell::RefCell;
 #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
 use wasm_bindgen::JsCast;
 
-use crate::{FULLSCREEN_SHADER_SOURCE, GpuError};
+use crate::{FULLSCREEN_SHADER_SOURCE, GpuError, GpuErrorLog, GpuErrorStats};
+
+#[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+#[wasm_bindgen::prelude::wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = console, js_name = error)]
+    fn console_error(message: &str);
+}
+
+fn report_gpu_error(message: &str) {
+    let line = format!("GPU error (logged once per message, the frame may be wrong): {message}");
+    #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+    console_error(&line);
+    #[cfg(not(all(feature = "wasm", target_arch = "wasm32")))]
+    eprintln!("{line}");
+}
+
+/// Records the device's uncaptured errors instead of letting wgpu panic.
+///
+/// Default without a handler (wgpu 29): the core backend, used for the WebGL2
+/// fallback and native, panics (`backend/wgpu_core.rs`, `default_error_handler`);
+/// the WebGPU backend installs nothing and leaves the error to the browser's
+/// `uncapturederror` event (`backend/webgpu.rs`, `on_uncaptured_error`). A panic
+/// is a trap on wasm32, after which the compositor stays unusable. Here every
+/// error is counted, each distinct message is logged once, and a render that
+/// saw one can fail with it (`GpuContext::gpu_error_stats`, `errors_since`).
+fn install_uncaptured_error_handler(device: &wgpu::Device) -> Arc<Mutex<GpuErrorLog>> {
+    let log = Arc::new(Mutex::new(GpuErrorLog::default()));
+    let sink = Arc::clone(&log);
+    device.on_uncaptured_error(Arc::new(move |error: wgpu::Error| {
+        // The guard is gone before logging (it only lives in this statement).
+        let new_message = sink
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .record(&error.to_string());
+        if let Some(message) = new_message {
+            report_gpu_error(&message);
+        }
+    }));
+    log
+}
 
 #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
 #[derive(Debug)]
@@ -49,6 +91,8 @@ pub struct GpuContext {
     texture_sampler_bind_group_layout: wgpu::BindGroupLayout,
     blit_pipeline: wgpu::RenderPipeline,
     supports_external_texture_copies: bool,
+    /// Uncaptured errors of `device` (see `install_uncaptured_error_handler`).
+    gpu_errors: Arc<Mutex<GpuErrorLog>>,
     /// The HTML canvas that the WebGL context is bound to. Only populated on the WebGL
     /// fallback path. Used by render_texture_via_gl_canvas to output frames on WebGL.
     #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
@@ -63,6 +107,7 @@ impl GpuContext {
         let (instance, adapter, device, queue, gl_canvas) = Self::acquire_device().await?;
         #[cfg(not(all(feature = "wasm", target_arch = "wasm32")))]
         let (instance, adapter, device, queue) = Self::acquire_device().await?;
+        let gpu_errors = install_uncaptured_error_handler(&device);
         let texture_format = if adapter.get_info().backend == wgpu::Backend::Gl {
             wgpu::TextureFormat::Rgba8Unorm
         } else {
@@ -179,6 +224,7 @@ impl GpuContext {
             texture_sampler_bind_group_layout,
             blit_pipeline,
             supports_external_texture_copies,
+            gpu_errors,
             #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
             gl_canvas,
             #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
@@ -357,6 +403,14 @@ impl GpuContext {
         &self.blit_pipeline
     }
 
+    /// Uncaptured GPU errors since the device was created (count, last message).
+    pub fn gpu_error_stats(&self) -> GpuErrorStats {
+        self.gpu_errors
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .stats()
+    }
+
     /// Whether the GPU backend can render to arbitrary canvas surfaces.
     /// True for WebGPU, false for WebGL which can only surface-render to
     /// the specific canvas its GL context was originally created on.
@@ -510,7 +564,22 @@ impl GpuContext {
         label: &'static str,
     ) -> wgpu::Texture {
         let texture = self.create_render_texture(width, height, label);
+        self.copy_offscreen_canvas_to_texture(canvas, &texture, width, height);
+        texture
+    }
 
+    /// Copies the canvas into an existing `width` x `height` render texture (an
+    /// upload that reuses the texture of the previous one instead of creating a
+    /// new one). Safe while earlier submitted frames still read the texture:
+    /// the queue runs the copy after them.
+    #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+    pub fn copy_offscreen_canvas_to_texture(
+        &self,
+        canvas: &wgpu::web_sys::OffscreenCanvas,
+        texture: &wgpu::Texture,
+        width: u32,
+        height: u32,
+    ) {
         if self.supports_external_texture_copies {
             self.queue.copy_external_image_to_texture(
                 &wgpu::CopyExternalImageSourceInfo {
@@ -519,7 +588,7 @@ impl GpuContext {
                     flip_y: false,
                 },
                 wgpu::CopyExternalImageDestInfo {
-                    texture: &texture,
+                    texture,
                     mip_level: 0,
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
@@ -556,7 +625,7 @@ impl GpuContext {
 
             self.queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
-                    texture: &texture,
+                    texture,
                     mip_level: 0,
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
@@ -574,8 +643,57 @@ impl GpuContext {
                 },
             );
         }
+    }
 
+    /// A new `width` x `height` render texture holding the bitmap's pixels.
+    #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+    pub fn import_image_bitmap_texture(
+        &self,
+        bitmap: &wgpu::web_sys::ImageBitmap,
+        width: u32,
+        height: u32,
+        label: &'static str,
+    ) -> wgpu::Texture {
+        let texture = self.create_render_texture(width, height, label);
+        self.copy_image_bitmap_to_texture(bitmap, &texture, width, height);
         texture
+    }
+
+    /// Copies the bitmap into an existing `width` x `height` render texture, with
+    /// the parameters of `copy_offscreen_canvas_to_texture` (origin 0, no flip,
+    /// sRGB, not premultiplied). Unlike a canvas, a bitmap is copied without the
+    /// readback on the WebGL backend too (wgpu allows ImageBitmap there without
+    /// `UNRESTRICTED_EXTERNAL_TEXTURE_COPIES`). The caller checks the copy with
+    /// `validate_external_copy` first: a copy larger than the bitmap panics in
+    /// wgpu.
+    #[cfg(all(feature = "wasm", target_arch = "wasm32"))]
+    pub fn copy_image_bitmap_to_texture(
+        &self,
+        bitmap: &wgpu::web_sys::ImageBitmap,
+        texture: &wgpu::Texture,
+        width: u32,
+        height: u32,
+    ) {
+        self.queue.copy_external_image_to_texture(
+            &wgpu::CopyExternalImageSourceInfo {
+                source: wgpu::ExternalImageSource::ImageBitmap(bitmap.clone()),
+                origin: wgpu::Origin2d::ZERO,
+                flip_y: false,
+            },
+            wgpu::CopyExternalImageDestInfo {
+                texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+                color_space: wgpu::PredefinedColorSpace::Srgb,
+                premultiplied_alpha: false,
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
     }
 
     #[cfg(all(feature = "wasm", target_arch = "wasm32"))]

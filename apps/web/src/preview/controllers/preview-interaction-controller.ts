@@ -18,8 +18,12 @@ import {
 	type SnapLine,
 } from "@/preview/preview-snap";
 import type { TCanvasSize } from "@/project/types";
+import { getElementLocalTime } from "@/animation";
+import type { ElementAnimations } from "@/animation/types";
 import type { ParamValues } from "@/params";
 import { buildTransformFromParams, type Transform } from "@/rendering";
+import { resolveTransformAtTime } from "@/rendering/animation-values";
+import { planPinGesture, planPinRelease, type PinOps } from "./pin-gesture";
 import { isVisualElement } from "@/timeline/element-utils";
 import type {
 	ElementRef,
@@ -53,6 +57,12 @@ interface DragElementSnapshot {
 	readonly elementId: string;
 	readonly initialTransform: Transform;
 	readonly initialParams: ParamValues;
+	/** A stuck element is dragged with its pin channels lifted. */
+	readonly pin: {
+		readonly animationsWithoutPin: ElementAnimations | undefined;
+		readonly originalParams: ParamValues;
+		readonly originalAnimations: ElementAnimations | undefined;
+	} | null;
 }
 
 interface DraggingGesture extends CapturedPointerState {
@@ -146,6 +156,8 @@ export interface PreviewInteractionDeps {
 	timeline: TimelineOps;
 	playback: PlaybackApi;
 	preview: PreviewOptions;
+	/** Without it every element is dragged as before. */
+	pins?: PinOps;
 }
 
 export interface PreviewInteractionDepsRef {
@@ -206,8 +218,12 @@ function movedPastDragThreshold({
 
 function toDragElementSnapshots({
 	elementsWithTracks,
+	currentTime,
+	isPinned,
 }: {
 	elementsWithTracks: Array<{ track: TimelineTrack; element: TimelineElement }>;
+	currentTime: number;
+	isPinned: ({ elementId }: { elementId: string }) => boolean;
 }): DragElementSnapshot[] {
 	const isVisualTrackedElement = (value: {
 		track: TimelineTrack;
@@ -217,12 +233,50 @@ function toDragElementSnapshots({
 
 	return elementsWithTracks
 		.filter(isVisualTrackedElement)
-		.map(({ track, element }) => ({
-			trackId: track.id,
-			elementId: element.id,
-			initialTransform: buildTransformFromParams({ params: element.params }),
-			initialParams: element.params,
-		}));
+		.map(({ track, element }): DragElementSnapshot => {
+			const gesture = planPinGesture({
+				animations: element.animations,
+				isPinned: isPinned({ elementId: element.id }),
+			});
+			if (!gesture.isPinned) {
+				return {
+					trackId: track.id,
+					elementId: element.id,
+					initialTransform: buildTransformFromParams({ params: element.params }),
+					initialParams: element.params,
+					pin: null,
+				};
+			}
+			// A stuck element is moved from how it looks at the playhead (the keys
+			// decide that), and its base values are rewritten to match while the keys are lifted.
+			const look = resolveTransformAtTime({
+				baseTransform: buildTransformFromParams({ params: element.params }),
+				animations: element.animations,
+				localTime: getElementLocalTime({
+					timelineTime: currentTime,
+					elementStartTime: element.startTime,
+					elementDuration: element.duration,
+				}),
+			});
+			return {
+				trackId: track.id,
+				elementId: element.id,
+				initialTransform: look,
+				initialParams: {
+					...element.params,
+					"transform.positionX": look.position.x,
+					"transform.positionY": look.position.y,
+					"transform.scaleX": look.scaleX,
+					"transform.scaleY": look.scaleY,
+					"transform.rotate": look.rotate,
+				},
+				pin: {
+					animationsWithoutPin: gesture.animationsWithoutPin,
+					originalParams: element.params,
+					originalAnimations: element.animations,
+				},
+			};
+		});
 }
 
 export class PreviewInteractionController {
@@ -230,6 +284,8 @@ export class PreviewInteractionController {
 	private readonly subscribers = new Set<() => void>();
 
 	private gesture: GestureSession = IDLE_GESTURE;
+	/** Where the user has left each stuck element in the running drag. */
+	private readonly pinLooks = new Map<string, Transform>();
 	private editingTextState: EditingTextState | null = null;
 	private wasPlaying: boolean;
 	private unsubscribePlayback: (() => void) | null = null;
@@ -288,6 +344,7 @@ export class PreviewInteractionController {
 			this.deps.timeline.discardPreview();
 		}
 
+		this.pinLooks.clear();
 		this.releaseCapturedPointer({ pointerState: this.gesture });
 		this.gesture = IDLE_GESTURE;
 		this.clearSnapLines();
@@ -403,9 +460,10 @@ export class PreviewInteractionController {
 			if (type === "pointercancel") {
 				this.deps.timeline.discardPreview();
 			} else {
-				this.deps.timeline.commitPreview();
+				this.finishDrag({ drag });
 			}
 
+			this.pinLooks.clear();
 			this.gesture = IDLE_GESTURE;
 			this.clearSnapLines();
 			this.releaseCapturedPointer({ pointerState: drag });
@@ -434,6 +492,49 @@ export class PreviewInteractionController {
 		this.gesture = IDLE_GESTURE;
 		this.clearSnapLines();
 		this.releaseCapturedPointer({ pointerState: pending });
+	}
+
+	/**
+	 * Releases a drag. Stuck elements were dragged with their pin channels
+	 * lifted: they are stuck again from the same analysis (with the look the
+	 * user left them in) instead of committing the lifted state, which would
+	 * leave them without their pin.
+	 */
+	private finishDrag({ drag }: { drag: DraggingGesture }): void {
+		const stuck = drag.elements.filter(
+			(element) => element.pin !== null && this.pinLooks.has(element.elementId),
+		);
+		const plan = planPinRelease({ total: drag.elements.length, pinned: stuck.length });
+
+		if (plan === "commit") {
+			this.deps.timeline.commitPreview();
+			return;
+		}
+		if (plan === "repin") {
+			this.deps.timeline.discardPreview();
+		} else {
+			this.deps.timeline.previewElements(
+				stuck.flatMap(({ trackId, elementId, pin }) =>
+					pin
+						? [
+								{
+									trackId,
+									elementId,
+									updates: {
+										params: pin.originalParams,
+										animations: pin.originalAnimations,
+									},
+								},
+							]
+						: [],
+				),
+			);
+			this.deps.timeline.commitPreview();
+		}
+		for (const { elementId } of stuck) {
+			const look = this.pinLooks.get(elementId);
+			if (look) this.deps.pins?.repin({ elementId, look });
+		}
 	}
 
 	private notify(): void {
@@ -492,6 +593,9 @@ export class PreviewInteractionController {
 			elementsWithTracks: this.deps.timeline.getElementsWithTracks({
 				elements: dragSelection,
 			}),
+			currentTime: this.deps.scene.getCurrentTime(),
+			isPinned: ({ elementId }) =>
+				this.deps.pins?.isPinned({ elementId }) ?? false,
 		});
 
 		if (draggableElements.length === 0) {
@@ -568,17 +672,30 @@ export class PreviewInteractionController {
 			snappedPosition.y - firstElement.initialTransform.position.y;
 
 		this.deps.timeline.previewElements(
-			drag.elements.map(({ trackId, elementId, initialTransform, initialParams }) => ({
-				trackId,
-				elementId,
-				updates: {
-					params: {
-						...initialParams,
-						"transform.positionX": initialTransform.position.x + deltaSnappedX,
-						"transform.positionY": initialTransform.position.y + deltaSnappedY,
-					},
+			drag.elements.map(
+				({ trackId, elementId, initialTransform, initialParams, pin }) => {
+					const positionX = initialTransform.position.x + deltaSnappedX;
+					const positionY = initialTransform.position.y + deltaSnappedY;
+					if (pin) {
+						this.pinLooks.set(elementId, {
+							...initialTransform,
+							position: { x: positionX, y: positionY },
+						});
+					}
+					return {
+						trackId,
+						elementId,
+						updates: {
+							params: {
+								...initialParams,
+								"transform.positionX": positionX,
+								"transform.positionY": positionY,
+							},
+							...(pin && { animations: pin.animationsWithoutPin }),
+						},
+					};
 				},
-			})),
+			),
 		);
 	}
 }

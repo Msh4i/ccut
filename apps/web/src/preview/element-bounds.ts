@@ -8,6 +8,11 @@ import {
 } from "@/animation";
 import { resolveTransformAtTime } from "@/rendering/animation-values";
 import { buildTransformFromParams } from "@/rendering";
+import { activeCameraAt } from "@/scene3d/render/active-camera";
+import { isLayerDrawable, projectedLayerBounds } from "@/scene3d/render/homography";
+import { resolveTransform3DAtTime } from "@/scene3d/render/layer-transform";
+import type { Transform3D, ViewCamera } from "@/scene3d/types";
+import { containFitSize } from "@/services/renderer/visual-transform";
 
 export interface ElementBounds {
 	cx: number;
@@ -24,7 +29,7 @@ export interface ElementWithBounds {
 	bounds: ElementBounds;
 }
 
-function getVisualElementBounds({
+export function getVisualElementBounds({
 	canvasWidth,
 	canvasHeight,
 	sourceWidth,
@@ -101,35 +106,105 @@ function getTransformedRectBounds({
 }
 
 /**
+ * Bounds of a 3D layer: the axis-aligned box of its quad projected through
+ * the active camera (rotation 0). `null` when it cannot be seen (behind the
+ * camera, edge-on, empty), so it cannot be picked.
+ */
+function get3DLayerBounds({
+	view,
+	transform,
+	contentWidth,
+	contentHeight,
+	canvasWidth,
+	canvasHeight,
+}: {
+	view: ViewCamera;
+	transform: Transform3D;
+	contentWidth: number;
+	contentHeight: number;
+	canvasWidth: number;
+	canvasHeight: number;
+}): ElementBounds | null {
+	const geometry = { view, transform, contentWidth, contentHeight };
+	if (!isLayerDrawable(geometry)) return null;
+	const box = projectedLayerBounds({ ...geometry, canvasWidth, canvasHeight });
+	if (!box) return null;
+	return {
+		cx: (box.left + box.right) / 2,
+		cy: (box.top + box.bottom) / 2,
+		width: box.right - box.left,
+		height: box.bottom - box.top,
+		rotation: 0,
+	};
+}
+
+/**
  * Bounds policy: bounds reflect base content geometry (text glyphs + background,
  * sticker/image/video content area) and base transform. Post-effect spill (blur,
  * glow) and mask-clipped regions are intentionally excluded — handles manipulate
- * the canonical element geometry, not visual effect output.
+ * the canonical element geometry, not visual effect output. A 3D layer
+ * (`transform3d.enabled`) ignores its 2D transform: its bounds are its
+ * projected quad's box through `view` (the active camera).
  */
 function getElementBounds({
 	element,
 	canvasSize,
 	mediaAsset,
 	localTime,
+	view,
 }: {
 	element: TimelineElement;
 	canvasSize: { width: number; height: number };
 	mediaAsset?: MediaAsset | null;
 	localTime: number;
+	view: () => ViewCamera;
 }): ElementBounds | null {
 	if (element.type === "audio" || element.type === "effect") return null;
 	if ("hidden" in element && element.hidden) return null;
 
 	const { width: canvasWidth, height: canvasHeight } = canvasSize;
+	const transform3d =
+		element.type === "camera"
+			? null
+			: resolveTransform3DAtTime({
+					params: element.params,
+					animations: element.animations,
+					localTime,
+				});
+	const bounds3D = ({
+		sourceWidth,
+		sourceHeight,
+	}: {
+		sourceWidth: number;
+		sourceHeight: number;
+	}): ElementBounds | null => {
+		if (!transform3d) return null;
+		// Local content units: the element's size on the canvas at 2D scale 1.
+		const content = containFitSize({
+			canvasWidth,
+			canvasHeight,
+			sourceWidth,
+			sourceHeight,
+		});
+		return get3DLayerBounds({
+			view: view(),
+			transform: transform3d,
+			contentWidth: content.width,
+			contentHeight: content.height,
+			canvasWidth,
+			canvasHeight,
+		});
+	};
 
 	if (element.type === "video" || element.type === "image") {
+		const sourceWidth = mediaAsset?.width ?? canvasWidth;
+		const sourceHeight = mediaAsset?.height ?? canvasHeight;
+		if (transform3d) return bounds3D({ sourceWidth, sourceHeight });
 		const transform = resolveTransformAtTime({
 			baseTransform: buildTransformFromParams({ params: element.params }),
 			animations: element.animations,
 			localTime,
 		});
-		const sourceWidth = mediaAsset?.width ?? canvasWidth;
-		const sourceHeight = mediaAsset?.height ?? canvasHeight;
 		return getVisualElementBounds({
 			canvasWidth,
 			canvasHeight,
@@ -140,6 +215,12 @@ function getElementBounds({
 	}
 
 	if (element.type === "sticker") {
+		if (transform3d) {
+			return bounds3D({
+				sourceWidth: element.intrinsicWidth ?? STICKER_INTRINSIC_SIZE_FALLBACK,
+				sourceHeight: element.intrinsicHeight ?? STICKER_INTRINSIC_SIZE_FALLBACK,
+			});
+		}
 		const transform = resolveTransformAtTime({
 			baseTransform: buildTransformFromParams({ params: element.params }),
 			animations: element.animations,
@@ -155,6 +236,12 @@ function getElementBounds({
 	}
 
 	if (element.type === "graphic") {
+		if (transform3d) {
+			return bounds3D({
+				sourceWidth: DEFAULT_GRAPHIC_SOURCE_SIZE,
+				sourceHeight: DEFAULT_GRAPHIC_SOURCE_SIZE,
+			});
+		}
 		const transform = resolveTransformAtTime({
 			baseTransform: buildTransformFromParams({ params: element.params }),
 			animations: element.animations,
@@ -186,6 +273,17 @@ function getElementBounds({
 			localTime,
 			ctx,
 		});
+
+		if (transform3d) {
+			return get3DLayerBounds({
+				view: view(),
+				transform: transform3d,
+				contentWidth: measured.visualRect.width,
+				contentHeight: measured.visualRect.height,
+				canvasWidth,
+				canvasHeight,
+			});
+		}
 
 		return getTransformedRectBounds({
 			canvasWidth,
@@ -257,6 +355,17 @@ export function getVisibleElementsWithBounds({
 	mediaAssets: MediaAsset[];
 }): ElementWithBounds[] {
 	const mediaMap = new Map(mediaAssets.map((m) => [m.id, m]));
+	// The active camera, computed once and only when a 3D layer needs it.
+	let activeView: ViewCamera | null = null;
+	const view = () => {
+		activeView ??= activeCameraAt({
+			tracks,
+			time: currentTime,
+			canvasWidth: canvasSize.width,
+			canvasHeight: canvasSize.height,
+		});
+		return activeView;
+	};
 	const orderedTracks = [
 		...tracks.overlay.filter((track) => !("hidden" in track && track.hidden)),
 		...(!tracks.main.hidden ? [tracks.main] : []),
@@ -293,6 +402,7 @@ export function getVisibleElementsWithBounds({
 				canvasSize,
 				mediaAsset,
 				localTime,
+				view,
 			});
 			if (bounds) {
 				result.push({

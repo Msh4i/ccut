@@ -1,4 +1,5 @@
 import type {
+	CameraElement,
 	AudioTrack,
 	EffectTrack,
 	GraphicTrack,
@@ -153,6 +154,13 @@ function buildPlacedOverlayTrack({
 			return {
 				...buildEmptyTrack({ id, type: "effect" }),
 				elements: elements as EffectTrack["elements"],
+			};
+		case "camera":
+			return {
+				...buildEmptyTrack({ id, type: "camera" }),
+				elements: elements.filter(
+					(element): element is CameraElement => element.type === "camera",
+				),
 			};
 	}
 }

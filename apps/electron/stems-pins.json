@@ -1,0 +1,22 @@
+{
+	"_note": "Filled 2026-10-07 by the owner's LOCAL session (the cloud could not download these files). uv 0.12.23: sha256 and size checked three ways (the GitHub release API digest, the published .sha256 file, and a download hashed locally). python.version 3.12.15: the newest CPython 3.12 that uv 0.12.23 can fetch. stems-requirements.lock: made with that uv from stems-requirements.in (torch, torchaudio, demucs, numpy) by `uv pip compile --python-version 3.12.15 --generate-hashes --emit-index-url --no-header --no-annotate --index-url https://pypi.org/simple --extra-index-url https://download.pytorch.org/whl/cpu`: CPU wheels only (torch 2.14.1+cpu, no CUDA), 356 hashes, https only. Model: htdemucs 955717e8-8726e21a.th from dl.fbaipublicfiles.com (no redirect seen), 84141911 bytes; its sha256 starts with 8726e21a, the hex in its own file name, which torch.hub also checks. Demucs 4.1.0 asks the HuggingFace hub first (adefossez/HTDemucs, a different safetensors file) and, when that fails offline, falls back to this torch-hub checkpoint: the engine's dead proxy makes the first try fail, each job spends about 20 s in that retry loop. syncCacheBytes: du -sb of UV_CACHE_DIR after a fresh `uv pip sync --require-hashes --no-build` of the lock (hardlink mode). installSizeBytes: du -sb of engine/ after the sync and two driver runs (1050215705) plus the uv binary (47993144) plus the checkpoint (84141911). Verified end to end in a scratch directory: the installer's own uv steps, then the driver offline (dead proxy, env -i, PATH /usr/bin:/bin) at 44100 and 48000 Hz, four stems of the right size. NOT verified: the Electron installer itself in a real window; the licence of the htdemucs weights (the Demucs code is MIT, the weights have no licence statement of their own in the repository README or on the HuggingFace card).",
+	"schema": 1,
+	"uv": {
+		"version": "0.12.23",
+		"url": "https://github.com/astral-sh/uv/releases/download/0.12.23/uv-x86_64-unknown-linux-gnu.tar.gz",
+		"sha256": "9167d72b3319674b6303c4cbe071854bba13ebdf3d76b1a7cbdc175471fb66d6",
+		"sizeBytes": 19906150
+	},
+	"python": { "version": "3.12.15", "interpreterSha256": "0886fb76ceec8ff568d23079b5da6342bb41675e216e11525d4d6a9e65988d10" },
+	"lockFile": "stems-requirements.lock",
+	"syncCacheBytes": 924411706,
+	"installSizeBytes": 1182350760,
+	"model": {
+		"id": "htdemucs",
+		"fileName": "955717e8-8726e21a.th",
+		"url": "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/955717e8-8726e21a.th",
+		"sha256": "8726e21a993978c7ba086d3872e7608d7d5bfca646ca4aca459ffda844faa8b4",
+		"sizeBytes": 84141911,
+		"redirectHosts": []
+	}
+}

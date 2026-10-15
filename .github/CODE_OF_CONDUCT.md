@@ -59,7 +59,7 @@ representative at an online or offline event.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the community leaders responsible for enforcement at our discord server.
+reported to the project maintainer privately through the [Security tab](https://github.com/Msh4i/ccut/security) ("Report a vulnerability") or by contacting [@Msh4i](https://github.com/Msh4i) on GitHub.
 All complaints will be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the

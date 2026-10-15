@@ -1,10 +1,12 @@
-import type { DragEvent } from "react";
+import { toast } from "sonner";
 import { processMediaAssets } from "@/media/processing";
 import { showMediaUploadToast } from "@/media/upload-toast";
 import {
 	DEFAULT_NEW_ELEMENT_DURATION,
 	toElementDurationTicks,
 } from "@/timeline/creation";
+import { resolveStickerIntrinsicSize } from "@/stickers";
+import { describeId } from "@/stickers/describe-id";
 import { BASE_TIMELINE_PIXELS_PER_SECOND } from "@/timeline/scale";
 import type { FrameRate } from "opencut-wasm";
 import {
@@ -34,11 +36,40 @@ import { roundFrameTime, type MediaTime } from "@/wasm";
 
 // --- Config ---
 
+function reportDropErrorWithToast({ message }: { message: string }): void {
+	toast.error(message);
+}
+
+/**
+ * What the controller reads of a drag event and of the timeline's elements.
+ * Structural on purpose: a React DragEvent and the real DOM elements satisfy
+ * them, and so does a plain object in a test.
+ */
+export interface DragEventLike {
+	preventDefault: () => void;
+	clientX: number;
+	clientY: number;
+	dataTransfer: {
+		types: readonly string[];
+		files: ArrayLike<File>;
+		dropEffect: string;
+	};
+}
+
+export interface BoundsElementLike {
+	getBoundingClientRect: () => { left: number; top: number; height: number };
+}
+
+export interface ScrollElementLike extends BoundsElementLike {
+	scrollLeft: number;
+	scrollTop: number;
+}
+
 export interface DragDropConfig {
 	zoomLevel: number;
-	getContainerEl: () => HTMLDivElement | null;
-	getHeaderEl: () => HTMLElement | null;
-	getTracksScrollEl: () => HTMLDivElement | null;
+	getContainerEl: () => BoundsElementLike | null;
+	getHeaderEl: () => BoundsElementLike | null;
+	getTracksScrollEl: () => ScrollElementLike | null;
 	getActiveProjectFps: () => FrameRate | null;
 	getActiveProjectId: () => string | null;
 	getSceneTracks: () => SceneTracks;
@@ -59,6 +90,14 @@ export interface DragDropConfig {
 		elementId: string;
 		effectType: string;
 	}) => void;
+	/** Measures a sticker before it is dropped; rejects when it cannot be loaded. Defaults to the real loader. */
+	resolveStickerSize?: ({
+		stickerId,
+	}: {
+		stickerId: string;
+	}) => Promise<{ width: number; height: number }>;
+	/** Tells the user a drop failed. Defaults to an error toast. */
+	reportDropError?: ({ message }: { message: string }) => void;
 }
 
 export interface DragDropConfigRef {
@@ -174,7 +213,7 @@ export class DragDropController {
 
 	// --- Drag event handlers (bound, stable, passed as React props) ---
 
-	onDragEnter(event: DragEvent): void {
+	onDragEnter(event: DragEventLike): void {
 		event.preventDefault();
 		const hasAsset = this.config.dragSource.isActive();
 		const hasFiles = event.dataTransfer.types.includes("Files");
@@ -186,7 +225,7 @@ export class DragDropController {
 		}
 	}
 
-	onDragOver(event: DragEvent): void {
+	onDragOver(event: DragEventLike): void {
 		event.preventDefault();
 
 		const coords = this.getMouseTimelineCoords({ event });
@@ -233,7 +272,7 @@ export class DragDropController {
 		event.dataTransfer.dropEffect = "copy";
 	}
 
-	onDragLeave(event: DragEvent): void {
+	onDragLeave(event: DragEventLike): void {
 		event.preventDefault();
 		if (this.enterCount === 0) return;
 		this.enterCount -= 1;
@@ -242,7 +281,7 @@ export class DragDropController {
 		}
 	}
 
-	onDrop(event: DragEvent): void {
+	onDrop(event: DragEventLike): void {
 		event.preventDefault();
 		this.enterCount = 0;
 
@@ -296,7 +335,7 @@ export class DragDropController {
 	private getMouseTimelineCoords({
 		event,
 	}: {
-		event: DragEvent;
+		event: DragEventLike;
 	}): TimelineCoords | null {
 		const scrollContainer = this.config.getTracksScrollEl();
 		const referenceRect =
@@ -394,6 +433,12 @@ export class DragDropController {
 		this.insertAtTarget({ element, target, trackType: "text" });
 	}
 
+	/**
+	 * Like adding a sticker with its button: the image is loaded (and measured)
+	 * first, and a sticker that cannot be loaded is reported instead of being
+	 * dropped on the timeline as an element that renders as nothing. Dropping is
+	 * the one asset drop that waits, so it handles its own errors.
+	 */
 	private executeStickerDrop({
 		target,
 		dragData,
@@ -401,12 +446,65 @@ export class DragDropController {
 		target: DropTarget;
 		dragData: Extract<TimelineDragData, { type: "sticker" }>;
 	}): void {
-		const element = buildStickerElement({
-			stickerId: dragData.stickerId,
-			name: dragData.name,
-			startTime: target.xPosition,
-		});
-		this.insertAtTarget({ element, target, trackType: "graphic" });
+		void this.dropLoadedSticker({ target, dragData });
+	}
+
+	private async dropLoadedSticker({
+		target,
+		dragData,
+	}: {
+		target: DropTarget;
+		dragData: Extract<TimelineDragData, { type: "sticker" }>;
+	}): Promise<void> {
+		const report = ({ message }: { message: string }) =>
+			(this.config.reportDropError ?? reportDropErrorWithToast)({ message });
+		const label = describeId({ value: dragData.name ?? dragData.stickerId });
+
+		// Measuring the image can take a while (10 s at most) and the timeline can
+		// change meanwhile, so the track is remembered by id, not by its index.
+		const trackId = target.isNewTrack
+			? null
+			: (orderedTracks({ sceneTracks: this.config.getSceneTracks() })[
+					target.trackIndex
+				]?.id ?? null);
+
+		try {
+			const resolveSize =
+				this.config.resolveStickerSize ?? resolveStickerIntrinsicSize;
+			const { width, height } = await resolveSize({
+				stickerId: dragData.stickerId,
+			});
+			const element = buildStickerElement({
+				stickerId: dragData.stickerId,
+				name: dragData.name,
+				startTime: target.xPosition,
+				intrinsicWidth: width,
+				intrinsicHeight: height,
+			});
+
+			if (target.isNewTrack) {
+				this.insertAtTarget({ element, target, trackType: "graphic" });
+				return;
+			}
+			const track = orderedTracks({
+				sceneTracks: this.config.getSceneTracks(),
+			}).find((candidate) => candidate.id === trackId);
+			if (!track) {
+				report({
+					message: `Couldn't add "${label}": the track it was dropped on is gone.`,
+				});
+				return;
+			}
+			this.config.insertElement({
+				placement: { mode: "explicit", trackId: track.id },
+				element,
+			});
+		} catch (error) {
+			console.error("Failed to drop sticker:", error);
+			report({
+				message: `Couldn't add "${label}": the sticker could not be loaded.`,
+			});
+		}
 	}
 
 	private executeGraphicDrop({

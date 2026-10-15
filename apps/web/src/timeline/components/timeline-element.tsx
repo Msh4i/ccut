@@ -39,6 +39,7 @@ import type {
 	VideoElement,
 	ImageElement,
 	AudioElement,
+	CameraElement,
 } from "@/timeline";
 import type { MediaAsset } from "@/media/types";
 import { mediaSupportsAudio } from "@/media/media-utils";
@@ -50,6 +51,7 @@ import {
 import { buildWaveformGainSamples, isElementMuted } from "@/timeline/audio-state";
 import { getTimelinePixelsPerSecond } from "@/timeline";
 import { buildWaveformSourceKey } from "@/media/waveform-summary";
+import { BeatMarkers } from "@/timeline/beats/components/beat-markers";
 import { addMediaTime, type MediaTime, TICKS_PER_SECOND } from "@/wasm";
 import {
 	getActionDefinition,
@@ -58,7 +60,7 @@ import {
 	invokeAction,
 } from "@/actions";
 import { useElementSelection } from "@/timeline/hooks/element/use-element-selection";
-import { resolveStickerId } from "@/stickers";
+import { StickerElementContent } from "@/timeline/components/sticker-element-content";
 import { buildGraphicPreviewUrl } from "@/graphics";
 import Image from "next/image";
 import {
@@ -71,9 +73,9 @@ import {
 	VolumeOffIcon,
 	VolumeMute02Icon,
 	Search01Icon,
-	Exchange01Icon,
 	KeyframeIcon,
 	MagicWand05Icon,
+	Camera01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { uppercase } from "@/utils/string";
@@ -83,12 +85,21 @@ import { cn } from "@/utils/ui";
 import { usePropertiesStore } from "@/components/editor/panels/properties/stores/properties-store";
 import { getTrackTypeForElementType } from "@/timeline/placement/compatibility";
 import { useTimelineStore } from "@/timeline/timeline-store";
+import { useClipThumbnail } from "@/timeline/hooks/use-clip-thumbnail";
 import { KEYFRAME_LANE_HEIGHT_PX } from "./layout";
 import {
 	getExpandedRows,
 	getExpansionHeight,
 	type ExpandedRow,
 } from "./expanded-layout";
+import { startTrackCamera, trackCameraMenuItem } from "./track-camera-menu";
+import {
+	getCameraTrackerApi,
+	useCameraTrackerSession,
+} from "@/tracking/camera3d/session";
+import { toast } from "sonner";
+import { MatteKeyframeIndicators } from "./matte-keyframe-indicators";
+import { KeyframeContextMenu } from "./keyframe-context-menu";
 
 const KEYFRAME_INDICATOR_MIN_WIDTH_PX = 40;
 const ELEMENT_RING_WIDTH_PX = 1.5;
@@ -335,6 +346,12 @@ export function TimelineElement({
 		}
 	};
 
+	const trackCameraPhase = useCameraTrackerSession((state) => state.phase);
+	const trackCameraItem = trackCameraMenuItem({
+		element,
+		phase: trackCameraPhase,
+	});
+
 	const isMuted = canElementHaveAudio(element) && isElementMuted({ element });
 	const canToggleCurrentSourceAudio =
 		selectedElements.length === 1 &&
@@ -353,6 +370,7 @@ export function TimelineElement({
 	const expandedContent =
 		isExpanded && expandedRows.length > 0 ? (
 			<ExpandedKeyframeLanes
+				element={element}
 				rows={expandedRows}
 				keyframes={elementKeyframes}
 				trackId={track.id}
@@ -404,12 +422,27 @@ export function TimelineElement({
 							onResizeStart={onResizeStart}
 							isDropTarget={isDropTarget}
 						/>
+						<BeatMarkers
+							element={renderElement}
+							trackId={track.id}
+							zoomLevel={zoomLevel}
+							width={elementWidth}
+							height={baseTrackHeight}
+							onSecondaryMouseDown={(event) =>
+								onElementMouseDown({ event, element })
+							}
+							isDimmed={
+								isDropTarget ||
+								(canElementBeHidden(renderElement) && renderElement.hidden === true)
+							}
+						/>
 						{isSelected && (
 							<div
 								className="pointer-events-none absolute inset-x-0 top-0 overflow-hidden"
 								style={{ height: `${baseTrackHeight}px` }}
 							>
 								<KeyframeIndicators
+									element={element}
 									indicators={keyframeIndicators}
 									dragState={keyframeDragState}
 									displayedStartTime={displayedStartTime}
@@ -418,6 +451,15 @@ export function TimelineElement({
 									onKeyframeClick={handleKeyframeClick}
 									getVisualOffsetPx={getVisualOffsetPx}
 								/>
+								{(element.type === "video" || element.type === "image") && (
+									<MatteKeyframeIndicators
+										element={element}
+										trackId={track.id}
+										displayedStartTime={displayedStartTime}
+										zoomLevel={zoomLevel}
+										elementLeft={elementLeft}
+									/>
+								)}
 							</div>
 						)}
 					</div>
@@ -480,23 +522,31 @@ export function TimelineElement({
 							{isExpanded ? "Collapse keyframes" : "Expand keyframes"}
 						</ContextMenuItem>
 					)}
+					{trackCameraItem && (
+						<ContextMenuItem
+							icon={<HugeiconsIcon icon={Camera01Icon} />}
+							disabled={trackCameraItem.disabled}
+							onClick={(event: React.MouseEvent) => {
+								event.stopPropagation();
+								void startTrackCamera({
+									elementId: element.id,
+									api: getCameraTrackerApi(),
+									notify: (message) => toast.error(message),
+								});
+							}}
+						>
+							{trackCameraItem.label}
+						</ContextMenuItem>
+					)}
 					{selectedElements.length === 1 && hasMediaId(element) && (
-						<>
-							<ContextMenuItem
-								icon={<HugeiconsIcon icon={Search01Icon} />}
-								onClick={(event: React.MouseEvent) =>
-									handleRevealInMedia({ event })
-								}
-							>
-								Reveal media
-							</ContextMenuItem>
-							<ContextMenuItem
-								icon={<HugeiconsIcon icon={Exchange01Icon} />}
-								disabled
-							>
-								Replace media
-							</ContextMenuItem>
-						</>
+						<ContextMenuItem
+							icon={<HugeiconsIcon icon={Search01Icon} />}
+							onClick={(event: React.MouseEvent) =>
+								handleRevealInMedia({ event })
+							}
+						>
+							Reveal media
+						</ContextMenuItem>
 					)}
 					<ContextMenuSeparator />
 					<DeleteMenuItem
@@ -655,6 +705,7 @@ function ResizeHandle({
 }
 
 function KeyframeIndicators({
+	element,
 	indicators,
 	dragState,
 	displayedStartTime,
@@ -663,6 +714,7 @@ function KeyframeIndicators({
 	onKeyframeClick,
 	getVisualOffsetPx,
 }: {
+	element: TimelineElementType;
 	indicators: KeyframeIndicator[];
 	dragState: KeyframeDragState;
 	displayedStartTime: MediaTime;
@@ -706,38 +758,44 @@ function KeyframeIndicators({
 		});
 
 		return (
-			<button
+			<KeyframeContextMenu
 				key={indicator.time}
-				type="button"
-				className="pointer-events-auto absolute top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-grab mr-0.5"
-				style={{ left: visualOffsetPx }}
-				onMouseDown={(event) =>
-					onKeyframeMouseDown({ event, keyframes: indicator.keyframes })
-				}
-				onClick={(event) =>
-					onKeyframeClick({
-						event,
-						keyframes: indicator.keyframes,
-						orderedKeyframes,
-						indicatorTime: indicator.time,
-					})
-				}
-				aria-label="Select keyframe"
+				element={element}
+				keyframes={indicator.keyframes}
 			>
-				<HugeiconsIcon
-					icon={KeyframeIcon}
-					className={cn(
-						"size-3.5 text-black",
-						isIndicatorSelected ? "fill-primary" : "fill-white",
-					)}
-					strokeWidth={1.5}
-				/>
-			</button>
+				<button
+					type="button"
+					className="pointer-events-auto absolute top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-grab mr-0.5"
+					style={{ left: visualOffsetPx }}
+					onMouseDown={(event) =>
+						onKeyframeMouseDown({ event, keyframes: indicator.keyframes })
+					}
+					onClick={(event) =>
+						onKeyframeClick({
+							event,
+							keyframes: indicator.keyframes,
+							orderedKeyframes,
+							indicatorTime: indicator.time,
+						})
+					}
+					aria-label="Select keyframe"
+				>
+					<HugeiconsIcon
+						icon={KeyframeIcon}
+						className={cn(
+							"size-3.5 text-black",
+							isIndicatorSelected ? "fill-primary" : "fill-white",
+						)}
+						strokeWidth={1.5}
+					/>
+				</button>
+			</KeyframeContextMenu>
 		);
 	});
 }
 
 function ExpandedKeyframeLanes({
+	element,
 	rows,
 	keyframes,
 	trackId,
@@ -755,6 +813,7 @@ function ExpandedKeyframeLanes({
 	selectionBox,
 	isBoxSelecting,
 }: {
+	element: TimelineElementType;
 	rows: ExpandedRow[];
 	keyframes: ElementKeyframe[];
 	trackId: string;
@@ -851,41 +910,46 @@ function ExpandedKeyframeLanes({
 							});
 
 							return (
-								<button
+								<KeyframeContextMenu
 									key={kf.id}
-									type="button"
-									className={cn(
-										"pointer-events-auto absolute top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-grab",
-										isBoxSelecting && "pointer-events-none",
-									)}
-									style={{ left: visualOffset }}
-									onMouseDown={(event) => {
-										event.stopPropagation();
-										onKeyframeMouseDown({
-											event,
-											keyframes: [keyframeRef],
-										});
-									}}
-									onClick={(event) => {
-										event.stopPropagation();
-										onKeyframeClick({
-											event,
-											keyframes: [keyframeRef],
-											orderedKeyframes,
-											indicatorTime: kf.time,
-										});
-									}}
-									aria-label="Select keyframe"
+									element={element}
+									keyframes={[keyframeRef]}
 								>
-									<HugeiconsIcon
-										icon={KeyframeIcon}
+									<button
+										type="button"
 										className={cn(
-											"size-3.5 text-black mr-1",
-											isSelected ? "fill-primary" : "fill-white",
+											"pointer-events-auto absolute top-1/2 -translate-x-1/2 -translate-y-1/2 cursor-grab",
+											isBoxSelecting && "pointer-events-none",
 										)}
-										strokeWidth={1.5}
-									/>
-								</button>
+										style={{ left: visualOffset }}
+										onMouseDown={(event) => {
+											event.stopPropagation();
+											onKeyframeMouseDown({
+												event,
+												keyframes: [keyframeRef],
+											});
+										}}
+										onClick={(event) => {
+											event.stopPropagation();
+											onKeyframeClick({
+												event,
+												keyframes: [keyframeRef],
+												orderedKeyframes,
+												indicatorTime: kf.time,
+											});
+										}}
+										aria-label="Select keyframe"
+									>
+										<HugeiconsIcon
+											icon={KeyframeIcon}
+											className={cn(
+												"size-3.5 text-black mr-1",
+												isSelected ? "fill-primary" : "fill-white",
+											)}
+											strokeWidth={1.5}
+										/>
+									</button>
+								</KeyframeContextMenu>
 							);
 						})}
 					</div>
@@ -931,24 +995,10 @@ function EffectElementContent({
 	);
 }
 
-function StickerElementContent({
-	element,
-}: {
-	element: Extract<TimelineElementType, { type: "sticker" }>;
-}) {
+function CameraElementContent({ element }: { element: CameraElement }) {
 	return (
-		<div className="flex size-full items-center gap-2 pl-2">
-			<Image
-				src={resolveStickerId({
-					stickerId: element.stickerId,
-					options: { width: 20, height: 20 },
-				})}
-				alt={element.name}
-				className="size-4 shrink-0"
-				width={20}
-				height={20}
-				unoptimized
-			/>
+		<div className="flex size-full items-center justify-start gap-1 pl-2">
+			<HugeiconsIcon icon={Camera01Icon} className="size-4 shrink-0 text-white" />
 			<span className="truncate text-xs text-white">{element.name}</span>
 		</div>
 	);
@@ -1091,9 +1141,23 @@ function TiledMediaContent({
 	const mediaAssets = useEditor((e) => e.media.getAssets());
 
 	const mediaAsset = mediaAssets.find((asset) => asset.id === element.mediaId);
+	const isSelected = useEditor((e) =>
+		e.selection
+			.getSelectedElements()
+			.some((selected) => selected.elementId === element.id),
+	);
+	// A video with sound gets the same volume line and envelope as an audio
+	// clip, but only while it is selected so it never gets in the way of
+	// moving the clip.
+	const hasVolumeLine =
+		element.type === "video" &&
+		isSelected &&
+		mediaAsset?.hasAudio !== false &&
+		element.isSourceAudioEnabled !== false;
+	const clipThumbnail = useClipThumbnail({ asset: mediaAsset, element });
 	const imageUrl =
 		element.type === "video"
-			? mediaAsset?.thumbnailUrl
+			? (clipThumbnail ?? mediaAsset?.thumbnailUrl)
 			: (mediaAsset?.thumbnailUrl ?? mediaAsset?.url);
 
 	if (!imageUrl) {
@@ -1129,6 +1193,11 @@ function TiledMediaContent({
 				}
 				hasFade={true}
 			/>
+			{hasVolumeLine && element.type === "video" && (
+				<div className="group/audio absolute inset-x-0 top-5 bottom-0">
+					<AudioVolumeLine element={element} trackId={track.id} />
+				</div>
+			)}
 		</>
 	);
 }
@@ -1178,6 +1247,8 @@ function ElementContent({ element, track }: ElementContentProps) {
 		case "video":
 		case "image":
 			return <TiledMediaContent element={element} track={track} />;
+		case "camera":
+			return <CameraElementContent element={element} />;
 	}
 }
 

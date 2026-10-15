@@ -25,6 +25,11 @@ import {
 	clearActiveScope,
 	type ScopeEntry,
 } from "@/selection/scope";
+import {
+	findAdjacentKeyframeTimeAmong,
+	planPlayheadKeyframes,
+	resolveKeyframeTargets,
+} from "@/timeline/playhead-keyframes";
 import { useCommittedRef } from "@/hooks/use-committed-ref";
 
 export function useEditorActions() {
@@ -214,6 +219,50 @@ export function useEditorActions() {
 		() => {
 			editor.playback.seek({ time: editor.timeline.getTotalDuration() });
 		},
+		undefined,
+	);
+
+	const getKeyframeTargets = () =>
+		resolveKeyframeTargets({
+			tracks: editor.scenes.getActiveScene().tracks,
+			selected: selectedElements,
+		});
+
+	const seekToAdjacentKeyframe = (direction: "previous" | "next") => {
+		const time = findAdjacentKeyframeTimeAmong({
+			targets: getKeyframeTargets(),
+			playhead: editor.playback.getCurrentTime(),
+			direction,
+		});
+		if (time !== null) editor.playback.seek({ time });
+	};
+
+	useActionHandler(
+		"toggle-keyframe-at-playhead",
+		() => {
+			const plan = planPlayheadKeyframes({
+				targets: getKeyframeTargets(),
+				playhead: editor.playback.getCurrentTime(),
+			});
+			if (!plan) return;
+			if (plan.kind === "remove") {
+				editor.timeline.removeKeyframes({ keyframes: plan.keyframes });
+				return;
+			}
+			editor.timeline.upsertKeyframes({ keyframes: plan.keyframes });
+		},
+		undefined,
+	);
+
+	useActionHandler(
+		"previous-keyframe",
+		() => seekToAdjacentKeyframe("previous"),
+		undefined,
+	);
+
+	useActionHandler(
+		"next-keyframe",
+		() => seekToAdjacentKeyframe("next"),
 		undefined,
 	);
 

@@ -289,3 +289,27 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Keyframe preset tiles: the small clip plays its motion while the tile is hovered or focused. */
+@media (prefers-reduced-motion: no-preference) {
+  .group:hover .kf-preview,
+  .group:focus-visible .kf-preview {
+    animation: var(--kf-animation) 1.4s ease-in-out infinite alternate;
+  }
+}
+@keyframes kf-zoom-in { from { transform: scale(0.8); } to { transform: scale(1.05); } }
+@keyframes kf-zoom-out { from { transform: scale(1.05); } to { transform: scale(0.8); } }
+@keyframes kf-pulse { 0%, 100% { transform: scale(0.85); } 50% { transform: scale(1); } }
+@keyframes kf-shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-3px); }
+  40% { transform: translateX(3px); }
+  60% { transform: translateX(-2px); }
+  80% { transform: translateX(2px); }
+}
+@keyframes kf-float { from { transform: translateY(2px); } to { transform: translateY(-3px); } }
+@keyframes kf-swing { from { transform: rotate(-9deg); } to { transform: rotate(9deg); } }
+@keyframes kf-pan-left { from { transform: translateX(6px); } to { transform: translateX(-6px); } }
+@keyframes kf-pan-right { from { transform: translateX(-6px); } to { transform: translateX(6px); } }
+@keyframes kf-pan-up { from { transform: translateY(4px); } to { transform: translateY(-4px); } }
+@keyframes kf-pan-down { from { transform: translateY(-4px); } to { transform: translateY(4px); } }

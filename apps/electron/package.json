@@ -1,0 +1,125 @@
+{
+	"name": "@opencut/electron",
+	"productName": "Ccut",
+	"version": "0.1.0",
+	"private": true,
+	"description": "Ccut desktop shell: runs the apps/web standalone server locally and shows it in a window",
+	"author": "Ccut",
+	"main": "main.js",
+	"scripts": {
+		"bundle": "node bundle.js",
+		"start": "electron .",
+		"dist": "node bundle.js && electron-builder",
+		"dist:linux": "node bundle.js && electron-builder --linux",
+		"dist:win": "node bundle.js && electron-builder --win"
+	},
+	"devDependencies": {
+		"@modelcontextprotocol/sdk": "1.32.1",
+		"electron": "44.5.1",
+		"electron-builder": "^26.15.3",
+		"esbuild": "0.25.12",
+		"zod": "3.25.76"
+	},
+	"build": {
+		"appId": "app.ccut.desktop",
+		"productName": "Ccut",
+		"directories": {
+			"output": "dist"
+		},
+		"files": [
+			"main.js",
+			"env.js",
+			"preload.js",
+			"export-files.js",
+			"export-ipc.js",
+			"perf-switches.js",
+			"system-memory-ipc.js",
+			"render-gone.js",
+			"link-import-args.js",
+			"link-import-ipc.js",
+			"link-import-jobs.js",
+			"link-import-mux.js",
+			"link-import-mux-worker.js",
+			"link-import-openpgp.js",
+			"link-import-parse.js",
+			"link-import-process.js",
+			"link-import-tool.js",
+			"link-import-update.js",
+			"link-import-url.js",
+			"link-import-ytdlp-key.js",
+			"mcp-auth.js",
+			"mcp-clients.js",
+			"mcp-ipc.js",
+			"mcp-sdk.js",
+			"mcp-sdk-entry.js",
+			"mcp-server.js",
+			"mcp-tools.js",
+			"ccut-mcp.js",
+			"stems-download.js",
+			"stems-engine.js",
+			"stems-install.js",
+			"stems-ipc.js",
+			"models-ipc.js",
+			"stems-jobs.js",
+			"stems-pins.json",
+			"stems-requirements.lock",
+			"stems-tar.js",
+			"stems_demucs_driver.py",
+			"vendor/mediabunny.cjs",
+			"vendor/mcp-sdk.cjs",
+			"stub-env.js",
+			"icon.png",
+			"package.json",
+			"!**/node_modules/**"
+		],
+		"asarUnpack": [
+			"link-import-mux-worker.js",
+			"vendor/mediabunny.cjs",
+			"stems_demucs_driver.py",
+			"ccut-mcp.js"
+		],
+		"linux": {
+			"target": [
+				"AppImage",
+				"dir"
+			],
+			"category": "AudioVideo",
+			"icon": "icon.png",
+			"executableName": "ccut",
+			"synopsis": "Ccut video editor"
+		},
+		"win": {
+			"target": [
+				{
+					"target": "nsis",
+					"arch": [
+						"x64"
+					]
+				},
+				{
+					"target": "zip",
+					"arch": [
+						"x64"
+					]
+				}
+			],
+			"icon": "icon.png"
+		},
+		"nsis": {
+			"oneClick": false,
+			"allowToChangeInstallationDirectory": true
+		},
+		"afterPack": "./after-pack.js",
+		"appImage": {
+			"executableArgs": []
+		},
+		"electronFuses": {
+			"runAsNode": false,
+			"enableNodeOptionsEnvironmentVariable": false,
+			"enableNodeCliInspectArguments": false,
+			"onlyLoadAppFromAsar": true,
+			"grantFileProtocolExtraPrivileges": false
+		}
+	},
+	"desktopName": "ccut.desktop"
+}

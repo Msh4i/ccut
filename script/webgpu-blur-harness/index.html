@@ -1,0 +1,37 @@
+<!doctype html><meta charset=utf-8><body><script type=module>
+import init, * as w from "./pkg/opencut_wasm.js";
+window.__results = [];
+window.__errors = [];
+window.addEventListener("error", (e) => window.__errors.push(String(e.message)));
+window.__run = async (scenes, mode) => {
+	await init();
+	await w.initializeGpu();
+	for (const s of scenes) {
+		const res = { label: s.label, intensity: s.intensity, passCount: s.passCount, mode };
+		try {
+			if (window.__size !== s.width + 'x' + s.height) { w.initCompositor(s.width, s.height); window.__size = s.width + 'x' + s.height; }
+			const src = new OffscreenCanvas(s.width, s.height);
+			const c = src.getContext("2d");
+			const g = c.createLinearGradient(0, 0, s.width, s.height); g.addColorStop(0, "#f00"); g.addColorStop(1, "#00f");
+			c.fillStyle = g; c.fillRect(0, 0, s.width, s.height);
+			c.fillStyle = "#fff"; c.fillRect(s.width * 0.4, s.height * 0.4, Math.max(1, s.width * 0.2), Math.max(1, s.height * 0.2));
+			if (window.__upload === "canvas") w.uploadTexture({ id: "t", source: src, width: s.width, height: s.height }); else { const bmp = await createImageBitmap(src); w.uploadTextureReuse({ id: "t", source: bmp, width: s.width, height: s.height }); }
+			const layer = (groups) => ({ type: "layer", textureId: "t", transform: { centerX: s.width / 2, centerY: s.height / 2, width: s.width, height: s.height, rotationDegrees: 0, flipX: false, flipY: false }, opacity: 1, blendMode: "normal", effectPassGroups: groups, mask: null });
+			const items = mode === "clip" ? [layer(s.groups)] : [layer([]), ...(s.groups.length ? [{ type: "sceneEffect", effectPassGroups: s.groups }] : [])];
+			const before = w.getGpuErrorStats();
+			w.renderFrame({ width: s.width, height: s.height, clear: { color: [0, 0, 0, 1] }, items });
+			await new Promise((r) => setTimeout(r, 200));
+			const out = w.getCompositorCanvas();
+			out.style.cssText = "position:fixed;left:0;top:0;width:128px;height:128px;image-rendering:pixelated";
+			document.body.appendChild(out);
+			await new Promise((r) => setTimeout(r, 300));
+			const after = w.getGpuErrorStats();
+			res.gpuErrors = after.count - before.count; res.lastGpuError = after.lastMessage;
+			res.ok = true;
+		} catch (e) { res.ok = false; res.error = String(e && e.message || e); }
+		window.__results.push(res);
+	}
+	return window.__results;
+};
+window.__ready = true;
+</script>

@@ -34,6 +34,7 @@ import {
 const PERCENTAGE_DISPLAY = {
 	displayMultiplier: 100,
 	step: 1,
+	unitLabel: "percent",
 } as const;
 
 const TEXT_MASK_ALIGNMENT = "center";
@@ -65,6 +66,7 @@ const TEXT_MASK_PARAMS: ParamDefinition<keyof TextMaskParams & string>[] = [
 		min: MIN_FONT_SIZE,
 		max: MAX_FONT_SIZE,
 		step: 1,
+		slider: { min: MIN_FONT_SIZE, max: 100 },
 	},
 	{
 		key: "rotation",
@@ -74,6 +76,7 @@ const TEXT_MASK_PARAMS: ParamDefinition<keyof TextMaskParams & string>[] = [
 		min: 0,
 		max: 360,
 		step: 1,
+		unitLabel: "degrees",
 	},
 	{
 		key: "scale",
@@ -82,6 +85,7 @@ const TEXT_MASK_PARAMS: ParamDefinition<keyof TextMaskParams & string>[] = [
 		default: 1,
 		min: 1,
 		max: 500,
+		slider: { min: 1, max: 500, pivot: 100 },
 		...PERCENTAGE_DISPLAY,
 	},
 ];
@@ -97,7 +101,9 @@ function measureTextMask({
 		text: {
 			content: params.content,
 			fontSize: params.fontSize,
-			fontFamily: params.fontFamily,
+			// A saved project can hold any value here.
+			fontFamily:
+				typeof params.fontFamily === "string" ? params.fontFamily : "Arial",
 			fontWeight: params.fontWeight,
 			fontStyle: params.fontStyle,
 			textAlign: TEXT_MASK_ALIGNMENT,

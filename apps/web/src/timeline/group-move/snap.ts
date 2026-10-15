@@ -8,6 +8,7 @@ import {
 import { getElementEdgeSnapPoints } from "@/timeline/element-snap-source";
 import { getPlayheadSnapPoints } from "@/timeline/playhead-snap-source";
 import { getAnimationKeyframeSnapPointsForTimeline } from "@/timeline/animation-snap-points";
+import { getBeatSnapPoints } from "@/timeline/beats";
 import type { MoveGroup } from "./types";
 import { addMediaTime, type MediaTime, subMediaTime } from "@/wasm";
 
@@ -39,6 +40,7 @@ export function snapGroupEdges({
 					tracks,
 					excludeElementIds,
 				}),
+			() => getBeatSnapPoints({ tracks, excludeElementIds }),
 		],
 	});
 	const maxSnapDistance = getTimelineSnapThresholdInTicks({ zoomLevel });

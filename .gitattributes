@@ -1,0 +1,9 @@
+# Satır sonları: yalnızca dar kurallar. "* text=auto" bilerek yok: indeksteki ~500 CRLF dosyayı değiştirilmiş gösterirdi.
+*.sh text eol=lf
+script/setup-rust text eol=lf
+*.ps1 text eol=crlf
+# Texts that tests compare byte for byte (licence texts): never converted by autocrlf.
+THIRD_PARTY_NOTICES.md text eol=lf
+packages/opencut-wasm/*.wasm binary
+# Signed files and their signatures (link import tests): the signature covers exact bytes.
+apps/electron/test/fixtures/openpgp/** -text

@@ -11,7 +11,9 @@ import {
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useEditor } from "@/editor/use-editor";
+import { getEmptyDragImage } from "./drag-image";
 import type { TimelineDragData } from "@/timeline/drag";
+import { truncateFileName } from "@/utils/string";
 import { cn } from "@/utils/ui";
 import type { MediaTime } from "@/wasm";
 
@@ -55,9 +57,10 @@ export function DraggableItem({
 		onAddToTimeline?.({ currentTime: editor.playback.getCurrentTime() });
 	};
 
-	const emptyImg = new window.Image();
-	emptyImg.src =
-		"data:image/gif;base64,R0lGODlhAQABAIAAAAUEBAAAACwAAAAAAQABAAACAkQBADs=";
+	// Warm the shared drag image, so the first drag already has it decoded.
+	useEffect(() => {
+		getEmptyDragImage();
+	}, []);
 
 	useEffect(() => {
 		if (!isDragging) return;
@@ -74,7 +77,10 @@ export function DraggableItem({
 	}, [isDragging]);
 
 	const handleDragStart = (event: React.DragEvent) => {
-		event.dataTransfer.setDragImage(emptyImg, 0, 0);
+		const emptyImage = getEmptyDragImage();
+		if (emptyImage) {
+			event.dataTransfer.setDragImage(emptyImage, 0, 0);
+		}
 
 		editor.timeline.dragSource.begin({
 			dataTransfer: event.dataTransfer,
@@ -98,6 +104,8 @@ export function DraggableItem({
 				<div
 					ref={dragRef}
 					className={cn("group relative", containerClassName ?? "w-28")}
+					// A tile without a visible label (stickers) names itself on hover.
+					title={shouldShowLabel ? undefined : name}
 				>
 					<div
 						className={cn(
@@ -119,7 +127,8 @@ export function DraggableItem({
 							{preview}
 							{!isDragging && (
 								<PlusButton
-									className="opacity-0 group-hover:opacity-100"
+									className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+									label={name}
 									onClick={handleAddToTimeline}
 								/>
 							)}
@@ -130,11 +139,7 @@ export function DraggableItem({
 								title={name}
 							>
 								<span className="sr-only">{name}</span>
-								<span aria-hidden="true">
-									{name.length > 8
-										? `${name.slice(0, 16)}...${name.slice(-3)}`
-										: name}
-								</span>
+								<span aria-hidden="true">{truncateFileName({ name })}</span>
 							</span>
 						)}
 					</div>
@@ -186,6 +191,7 @@ export function DraggableItem({
 								</div>
 								{shouldShowPlusOnDrag && (
 									<PlusButton
+										label={name}
 										onClick={handleAddToTimeline}
 										tooltipText="Add to timeline or drag to position"
 									/>
@@ -201,10 +207,13 @@ export function DraggableItem({
 
 function PlusButton({
 	className,
+	label,
 	onClick,
 	tooltipText,
 }: {
 	className?: string;
+	/** What the button adds ("Red heart"): read by screen readers as "Add <label>". */
+	label?: string;
 	onClick?: () => void;
 	tooltipText?: string;
 }) {
@@ -221,6 +230,7 @@ function PlusButton({
 				onClick?.();
 			}}
 			title={tooltipText}
+			aria-label={label ? `Add ${label}` : undefined}
 		>
 			<Plus />
 		</Button>

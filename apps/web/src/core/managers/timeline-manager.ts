@@ -1,3 +1,8 @@
+import type {
+	KeyframePresetId,
+	KeyframePresetPlacement,
+} from "@/animation/keyframe-presets";
+import { applyKeyframePresetToElement } from "@/timeline/keyframe-preset";
 import type { EditorCore } from "@/core";
 import type { ElementBounds } from "@/preview/element-bounds";
 import type { ParamValues } from "@/params";
@@ -7,6 +12,8 @@ import type {
 	TimelineTrack,
 	TimelineElement,
 	RetimeConfig,
+	CreateCameraElement,
+	CreateTimelineElement,
 } from "@/timeline";
 import { calculateTotalDuration } from "@/timeline";
 import { TimelineDragSource } from "@/timeline/drag-source";
@@ -42,6 +49,9 @@ import {
 	MoveElementCommand,
 	TracksSnapshotCommand,
 	UpsertKeyframeCommand,
+	ApplyCameraPinCommand,
+	ApplyKeyframePresetCommand,
+	RemoveCameraPinCommand,
 	RemoveKeyframeCommand,
 	RetimeKeyframeCommand,
 	UpdateScalarKeyframeCurveCommand,
@@ -57,12 +67,26 @@ import {
 	UpsertEffectParamKeyframeCommand,
 	RemoveEffectParamKeyframeCommand,
 	ToggleSourceAudioSeparationCommand,
+	SetCameraTrackerCommand,
+	DeleteTrackPointsCommand,
+	SetGroundPlaneCommand,
+	CreateTrackedLayersCommand,
 } from "@/commands/timeline";
 import type { InsertElementParams } from "@/commands/timeline/element/insert-element";
+import type {
+	CameraPinKeys,
+	CameraPinRange,
+} from "@/tracking/camera/pin-animations";
 import type {
 	PlannedElementMove,
 	PlannedTrackCreation,
 } from "@/timeline/group-move";
+import type { Target } from "@/scene3d/types";
+import type { CameraTrackerData } from "@/tracking/camera3d/types";
+import {
+	findVideoClip,
+	withDeletedTrackPoints,
+} from "@/tracking/camera3d/engine/tracker-tracks";
 
 export class TimelineManager {
 	private listeners = new Set<() => void>();
@@ -518,6 +542,191 @@ export class TimelineManager {
 		const command =
 			commands.length === 1 ? commands[0] : new BatchCommand(commands);
 		this.editor.command.execute({ command });
+	}
+
+	/**
+	 * Writes a ready-made keyframe animation into every given clip that can take
+	 * it, in one undo step (see `ApplyKeyframePresetCommand`). A clip that lacks a
+	 * property the preset needs, or is too short for it, is skipped. The range is
+	 * placed by `placement`; "playhead" starts it at the current playhead. Throws,
+	 * writing nothing, when no clip can take the preset. Returns how many did.
+	 */
+	applyKeyframePreset({
+		targets,
+		presetId,
+		placement,
+		seconds,
+	}: {
+		targets: Array<{ trackId: string; elementId: string }>;
+		presetId: KeyframePresetId;
+		placement: KeyframePresetPlacement;
+		seconds: number;
+	}): number {
+		const playhead = this.editor.playback.getCurrentTime();
+		const canvas = this.editor.project.getActive()?.settings.canvasSize;
+		if (!canvas) {
+			throw new Error("Keyframe preset: there is no open project.");
+		}
+		const commands = targets.flatMap(({ trackId, elementId }) => {
+			const element = this.getElementByRef({ trackId, elementId });
+			if (!element) {
+				return [];
+			}
+			const fits = applyKeyframePresetToElement({
+				element,
+				presetId,
+				placement,
+				seconds,
+				playheadLocal: playhead - element.startTime,
+				canvas,
+			});
+			return fits
+				? [
+						new ApplyKeyframePresetCommand({
+							trackId,
+							elementId,
+							presetId,
+							placement,
+							seconds,
+							playhead,
+						}),
+					]
+				: [];
+		});
+		if (commands.length === 0) {
+			throw new Error(
+				`Keyframe preset "${presetId}" does not fit the selected clip${targets.length === 1 ? "" : "s"}.`,
+			);
+		}
+		this.editor.command.execute({
+			command: commands.length === 1 ? commands[0] : new BatchCommand(commands),
+		});
+		return commands.length;
+	}
+
+	/**
+	 * Sticks an element to the scene: writes its five transform channels over
+	 * `range` in one undo step. Throws, writing nothing, when the track or
+	 * element is missing or cannot be moved.
+	 */
+	applyCameraPin({
+		trackId,
+		elementId,
+		channels,
+		range,
+	}: {
+		trackId: string;
+		elementId: string;
+		channels: CameraPinKeys;
+		range: CameraPinRange;
+	}): void {
+		const command = new ApplyCameraPinCommand({
+			trackId,
+			elementId,
+			channels,
+			range,
+		});
+		this.editor.command.execute({ command });
+	}
+
+	/**
+	 * Unsticks an element: removes the pin keys of `range` and keeps the element
+	 * where it is at the playhead, in one undo step. Throws, writing nothing,
+	 * when the track or element is missing.
+	 */
+	removeCameraPin({
+		trackId,
+		elementId,
+		range,
+	}: {
+		trackId: string;
+		elementId: string;
+		range: CameraPinRange;
+	}): void {
+		const command = new RemoveCameraPinCommand({
+			trackId,
+			elementId,
+			range,
+			playhead: this.editor.playback.getCurrentTime(),
+		});
+		this.editor.command.execute({ command });
+	}
+
+	/**
+	 * Track Camera: writes (or, with `null`, removes) a video clip's tracker
+	 * data in one undo step. Throws, writing nothing, when the clip is gone.
+	 */
+	setCameraTracker({
+		elementId,
+		data,
+	}: {
+		elementId: string;
+		data: CameraTrackerData | null;
+	}): void {
+		const command = new SetCameraTrackerCommand({ elementId, data });
+		this.editor.command.execute({ command });
+	}
+
+	/**
+	 * Track Camera "Delete Selected Points" (whole tracks), one undo step.
+	 * Returns false, recording nothing, when there is nothing new to delete.
+	 */
+	deleteTrackPoints({
+		elementId,
+		trackIds,
+	}: {
+		elementId: string;
+		trackIds: readonly number[];
+	}): boolean {
+		const tracks = this.editor.scenes.getActiveSceneOrNull()?.tracks;
+		const data = tracks
+			? findVideoClip({ tracks, elementId })?.element.cameraTracker
+			: undefined;
+		if (!data || !withDeletedTrackPoints({ data, trackIds })) {
+			return false;
+		}
+		const command = new DeleteTrackPointsCommand({ elementId, trackIds });
+		this.editor.command.execute({ command });
+		return true;
+	}
+
+	/**
+	 * Track Camera "Set Ground Plane and Origin" with the camera of analysis
+	 * frame `frame`, one undo step, nothing moves on screen. Throws, writing
+	 * nothing, without a solve or with a degenerate target.
+	 */
+	setGroundPlane({
+		elementId,
+		target,
+		frame,
+	}: {
+		elementId: string;
+		target: Target;
+		frame: number;
+	}): void {
+		const command = new SetGroundPlaneCommand({ elementId, target, frame });
+		this.editor.command.execute({ command });
+	}
+
+	/**
+	 * Track Camera "Create ...": the created 3D layers and an optional camera
+	 * at the top of the timeline, one undo step. Returns their ids. Throws,
+	 * writing nothing, when there is nothing to create or a layer kind cannot
+	 * be placed.
+	 */
+	createTrackedLayers({
+		layers,
+		camera,
+	}: {
+		layers: readonly CreateTimelineElement[];
+		camera: CreateCameraElement | null;
+	}): { elementIds: string[]; cameraElementId: string | null } {
+		const command = new CreateTrackedLayersCommand({ layers, camera });
+		this.editor.command.execute({ command });
+		return {
+			elementIds: command.getElementIds(),
+			cameraElementId: command.getCameraElementId(),
+		};
 	}
 
 	removeKeyframes({

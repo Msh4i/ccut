@@ -8,6 +8,8 @@ mod gpu;
 mod masks;
 #[cfg(target_arch = "wasm32")]
 mod perf;
+#[cfg(any(target_arch = "wasm32", test))]
+mod runtime_slot;
 
 #[cfg(target_arch = "wasm32")]
 pub use compositor::*;

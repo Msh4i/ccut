@@ -14,6 +14,7 @@ import {
 import { getBookmarkSnapPoints } from "@/timeline/bookmarks/index";
 import { getElementEdgeSnapPoints } from "@/timeline/element-snap-source";
 import { getAnimationKeyframeSnapPointsForTimeline } from "@/timeline/animation-snap-points";
+import { getBeatSnapPoints } from "@/timeline/beats";
 import {
 	getCenteredLineLeft,
 	timelineTimeToPixels,
@@ -267,6 +268,7 @@ export class PlayheadController {
 						getAnimationKeyframeSnapPointsForTimeline({
 							tracks: this.config.getSceneTracks(),
 						}),
+					() => getBeatSnapPoints({ tracks: this.config.getSceneTracks() }),
 				],
 			});
 			const result = resolveTimelineSnap({

@@ -1,10 +1,11 @@
 import { useRef } from "react";
 import { useEditor } from "@/editor/use-editor";
-import { NumberField } from "@/components/ui/number-field";
+import { SliderField } from "@/components/ui/slider-field";
 import { Switch } from "@/components/ui/switch";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { DashboardSpeed02Icon } from "@hugeicons/core-free-icons";
 import { buildConstantRetime } from "@/retime";
+import type { NumberSliderSpec } from "@/params/slider";
 import {
 	DEFAULT_RETIME_RATE,
 	MIN_RETIME_RATE,
@@ -13,6 +14,7 @@ import {
 	canMaintainPitch,
 } from "@/retime/rate";
 import type { AudioElement, VideoElement } from "@/timeline";
+import { useElementPreview } from "@/timeline/hooks/use-element-preview";
 import {
 	Section,
 	SectionContent,
@@ -30,6 +32,11 @@ import {
 
 const SPEED_STEP = 0.01;
 const SPEED_FRACTION_DIGITS = getFractionDigitsForStep({ step: SPEED_STEP });
+const SPEED_SLIDER: NumberSliderSpec = {
+	min: MIN_RETIME_RATE,
+	max: MAX_RETIME_RATE,
+	pivot: DEFAULT_RETIME_RATE,
+};
 
 function rateToDisplay({ rate }: { rate: number }): string {
 	return formatNumberForDisplay({
@@ -65,11 +72,16 @@ export function SpeedTab({
 	trackId: string;
 }) {
 	const editor = useEditor();
+	const { renderElement, previewUpdates } = useElementPreview({
+		trackId,
+		elementId: element.id,
+		fallback: element,
+	});
 	const rate = clampRetimeRate({
-		rate: element.retime?.rate ?? DEFAULT_RETIME_RATE,
+		rate: renderElement.retime?.rate ?? DEFAULT_RETIME_RATE,
 	});
 	const isPitchPreserveAvailable = canMaintainPitch({ rate });
-	const maintainPitch = element.retime?.maintainPitch ?? false;
+	const maintainPitch = renderElement.retime?.maintainPitch ?? false;
 	const pendingRateRef = useRef(rate);
 
 	const commitRetime = ({
@@ -86,26 +98,24 @@ export function SpeedTab({
 		});
 	};
 
+	const previewRate = (nextRate: number) => {
+		pendingRateRef.current = nextRate;
+		// Not buildRetime: that drops the retime at exactly 1x, and a preview of
+		// undefined equals the overlay's absent value, so it would be ignored.
+		previewUpdates({
+			retime: buildConstantRetime({ rate: nextRate, maintainPitch }),
+		});
+	};
+	const commitPendingRate = () =>
+		commitRetime({ rate: pendingRateRef.current, maintainPitch });
+	const resetRate = () =>
+		commitRetime({ rate: DEFAULT_RETIME_RATE, maintainPitch });
+
 	const speedDraft = usePropertyDraft({
 		displayValue: rateToDisplay({ rate }),
 		parse: (input) => parseSpeedInput({ input }),
-		onPreview: (nextRate) => {
-			pendingRateRef.current = nextRate;
-			editor.timeline.previewElements({
-				updates: [
-					{
-						trackId,
-						elementId: element.id,
-						updates: {
-							retime: buildRetime({ rate: nextRate, maintainPitch }),
-						},
-					},
-				],
-			});
-		},
-		onCommit: () => {
-			commitRetime({ rate: pendingRateRef.current, maintainPitch });
-		},
+		onPreview: previewRate,
+		onCommit: commitPendingRate,
 	});
 
 	return (
@@ -116,27 +126,28 @@ export function SpeedTab({
 			<SectionContent>
 				<SectionFields>
 					<SectionField label="Speed">
-						<NumberField
-							icon={<HugeiconsIcon icon={DashboardSpeed02Icon} />}
-							value={speedDraft.displayValue}
-							suffix="x"
-							scrubRanges={[
-								{ from: 0.01, to: 1, pixelsPerUnit: 160 },
-								{ from: 1, to: 5, pixelsPerUnit: 48 },
-							]}
-							scrubClamp={{ min: MIN_RETIME_RATE, max: MAX_RETIME_RATE }}
-							onFocus={() => {
-								pendingRateRef.current = rate;
-								speedDraft.onFocus();
+						<SliderField
+							value={rate}
+							slider={SPEED_SLIDER}
+							step={SPEED_STEP}
+							label="Speed"
+							unit="x"
+							onPreview={previewRate}
+							onCommit={commitPendingRate}
+							onReset={resetRate}
+							fieldProps={{
+								icon: <HugeiconsIcon icon={DashboardSpeed02Icon} />,
+								value: speedDraft.displayValue,
+								suffix: "x",
+								onFocus: () => {
+									pendingRateRef.current = rate;
+									speedDraft.onFocus();
+								},
+								onChange: speedDraft.onChange,
+								onBlur: speedDraft.onBlur,
+								onReset: resetRate,
+								isDefault: rate === DEFAULT_RETIME_RATE,
 							}}
-							onChange={speedDraft.onChange}
-							onBlur={speedDraft.onBlur}
-							onScrub={speedDraft.scrubTo}
-							onScrubEnd={speedDraft.commitScrub}
-							onReset={() =>
-								commitRetime({ rate: DEFAULT_RETIME_RATE, maintainPitch })
-							}
-							isDefault={rate === DEFAULT_RETIME_RATE}
 						/>
 					</SectionField>
 					<div className="flex items-center justify-between">

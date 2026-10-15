@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import { usePreviewViewport } from "@/preview/components/preview-viewport";
 import { useEditor } from "@/editor/use-editor";
+import { quoteFontFamily } from "@/fonts/font-family";
 import type { TextElement } from "@/timeline";
 import { DEFAULTS } from "@/timeline/defaults";
 import {
@@ -126,7 +127,7 @@ export function TextEditOverlay({
 				className="cursor-text select-text outline-none whitespace-pre"
 				style={{
 					fontSize: resolvedTextLayout.scaledFontSize,
-					fontFamily: textParams.fontFamily,
+					fontFamily: quoteFontFamily({ fontFamily: textParams.fontFamily }),
 					fontWeight: textParams.fontWeight === "bold" ? "bold" : "normal",
 					fontStyle: textParams.fontStyle === "italic" ? "italic" : "normal",
 					textAlign: textParams.textAlign,

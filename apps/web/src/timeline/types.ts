@@ -1,8 +1,11 @@
+import type { ElementCutout } from "@/background/brush/types";
 import type { ElementAnimations } from "@/animation/types";
+import type { PresetAnimations } from "@/animation/presets/types";
 import type { Effect } from "@/effects/types";
 import type { Mask } from "@/masks/types";
 import type { ParamValues } from "@/params";
 import type { MediaTime } from "@/wasm";
+import type { CameraTrackerData } from "@/tracking/camera3d/types";
 
 export type ElementRef = {
 	trackId: string;
@@ -26,7 +29,13 @@ export interface TScene {
 	updatedAt: Date;
 }
 
-export type TrackType = "video" | "text" | "audio" | "graphic" | "effect";
+export type TrackType =
+	| "video"
+	| "text"
+	| "audio"
+	| "graphic"
+	| "effect"
+	| "camera";
 
 interface BaseTrack {
 	id: string;
@@ -64,14 +73,30 @@ export interface EffectTrack extends BaseTrack {
 	hidden: boolean;
 }
 
+/**
+ * Holds the 3D camera layers (AE: Camera layer). The topmost camera element
+ * active at a time is the camera every 3D layer is drawn through.
+ */
+export interface CameraTrack extends BaseTrack {
+	type: "camera";
+	elements: CameraElement[];
+	hidden: boolean;
+}
+
 export type TimelineTrack =
 	| VideoTrack
 	| TextTrack
 	| AudioTrack
 	| GraphicTrack
-	| EffectTrack;
+	| EffectTrack
+	| CameraTrack;
 
-export type OverlayTrack = VideoTrack | TextTrack | GraphicTrack | EffectTrack;
+export type OverlayTrack =
+	| VideoTrack
+	| TextTrack
+	| GraphicTrack
+	| EffectTrack
+	| CameraTrack;
 
 export interface SceneTracks {
 	overlay: OverlayTrack[];
@@ -88,6 +113,8 @@ interface BaseAudioElement extends BaseTimelineElement {
 	type: "audio";
 	buffer?: AudioBuffer;
 	retime?: RetimeConfig;
+	/** Detected beats as source-media ticks, ascending. Absent = not analysed. */
+	beats?: MediaTime[];
 }
 
 export interface UploadAudioElement extends BaseAudioElement {
@@ -120,15 +147,32 @@ export interface VideoElement extends BaseTimelineElement {
 	isSourceAudioEnabled?: boolean;
 	hidden?: boolean;
 	retime?: RetimeConfig;
+	/** Detected beats as source-media ticks, ascending. Absent = not analysed. */
+	beats?: MediaTime[];
+	/** Manual brush cutout (strokes in source coordinates, matte keyframes). Absent = none. */
+	cutout?: ElementCutout;
 	effects?: Effect[];
+	presetAnimations?: PresetAnimations;
 	masks?: Mask[];
+	/** AE-style 3D camera tracker data (Track Camera). Absent = never tracked. */
+	cameraTracker?: CameraTrackerData;
+	/**
+	 * A stored `cameraTracker` record this version cannot read (damaged, over
+	 * the limits, or written by a newer version), kept apart so that nothing
+	 * reads it as tracker data. Storage writes it back as `cameraTracker`,
+	 * unchanged (`tracking/camera3d/engine/normalize.ts`).
+	 */
+	unusableCameraTracker?: unknown;
 }
 
 export interface ImageElement extends BaseTimelineElement {
 	type: "image";
 	mediaId: string;
+	/** Manual brush cutout (one keyframe at time 0). Absent = none. */
+	cutout?: ElementCutout;
 	hidden?: boolean;
 	effects?: Effect[];
+	presetAnimations?: PresetAnimations;
 	masks?: Mask[];
 }
 
@@ -136,6 +180,7 @@ export interface TextElement extends BaseTimelineElement {
 	type: "text";
 	hidden?: boolean;
 	effects?: Effect[];
+	presetAnimations?: PresetAnimations;
 }
 
 export interface StickerElement extends BaseTimelineElement {
@@ -146,6 +191,7 @@ export interface StickerElement extends BaseTimelineElement {
 	intrinsicHeight?: number;
 	hidden?: boolean;
 	effects?: Effect[];
+	presetAnimations?: PresetAnimations;
 }
 
 export interface GraphicElement extends BaseTimelineElement {
@@ -153,12 +199,24 @@ export interface GraphicElement extends BaseTimelineElement {
 	definitionId: string;
 	hidden?: boolean;
 	effects?: Effect[];
+	presetAnimations?: PresetAnimations;
 	masks?: Mask[];
 }
 
 export interface EffectElement extends BaseTimelineElement {
 	type: "effect";
 	effectType: string;
+}
+
+/**
+ * A 3D camera layer that reproduces the camera solved by Track Camera on
+ * the video element `sourceElementId` (its `cameraTracker.solve`). It draws
+ * nothing itself.
+ */
+export interface CameraElement extends BaseTimelineElement {
+	type: "camera";
+	sourceElementId: string;
+	hidden?: boolean;
 }
 
 export type ElementUpdatePatch = { params?: Partial<ParamValues> };
@@ -170,7 +228,8 @@ export type TimelineElement =
 	| TextElement
 	| StickerElement
 	| GraphicElement
-	| EffectElement;
+	| EffectElement
+	| CameraElement;
 
 export type ElementType = TimelineElement["type"];
 
@@ -216,6 +275,7 @@ export type CreateTextElement = Omit<TextElement, "id">;
 export type CreateStickerElement = Omit<StickerElement, "id">;
 export type CreateGraphicElement = Omit<GraphicElement, "id">;
 export type CreateEffectElement = Omit<EffectElement, "id">;
+export type CreateCameraElement = Omit<CameraElement, "id">;
 export type CreateTimelineElement =
 	| CreateAudioElement
 	| CreateVideoElement
@@ -223,7 +283,8 @@ export type CreateTimelineElement =
 	| CreateTextElement
 	| CreateStickerElement
 	| CreateGraphicElement
-	| CreateEffectElement;
+	| CreateEffectElement
+	| CreateCameraElement;
 
 export interface ElementDragState {
 	isDragging: boolean;

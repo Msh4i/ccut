@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
 	findClosestPointOnFreeformSegment,
 	getFreeformPathClosedStateAfterPointRemoval,
@@ -228,7 +228,38 @@ describe("mask geometry", () => {
 	});
 });
 
+// bun has no canvas, but text masks measure their text through an OffscreenCanvas
+// 2D context. Deterministic stand-in: every character is 10px wide.
+// Note: getTextMeasurementContext (text/measure-element.ts) caches the first context it
+// creates in a module singleton, so removing OffscreenCanvas in afterAll does NOT remove
+// this fake for later test files in the same bun process; it only restores the global.
+const fakeTextContext = {
+	font: "",
+	textBaseline: "",
+	save() {},
+	restore() {},
+	measureText: (text: string) => ({ width: text.length * 10 }),
+};
+
+class FakeOffscreenCanvas {
+	getContext() {
+		return fakeTextContext;
+	}
+}
+
 describe("mask snapping", () => {
+	beforeAll(() => {
+		Object.defineProperty(globalThis, "OffscreenCanvas", {
+			value: FakeOffscreenCanvas,
+			configurable: true,
+			writable: true,
+		});
+	});
+
+	afterAll(() => {
+		Reflect.deleteProperty(globalThis, "OffscreenCanvas");
+	});
+
 	test("snaps split mask movement using the shared position pipeline", () => {
 		const result = snapSplitMaskInteraction({
 			handleId: { kind: "position" },
@@ -346,7 +377,9 @@ describe("mask snapping", () => {
 		// bounds.width=200 → localCanvasSize.width/2=100 is the right snap target.
 		// width=0.4, scale=1 → aabbHalfW = (0.4*200)/2 * 1 = 40.
 		// At scale=2.48 → rightEdge=0+40*2.48=99.2; |99.2-100|=0.8 < threshold(8)
-		// → snaps to scale=1*(100/40)=2.5; line at position 100.
+		// → snaps to scale=1*(100/40)=2.5. The uniform handle scales around the
+		// centre (centerX=0), so the left edge lands on -100 at the same time and
+		// both guide lines are shown (no preferred edges for the scale handle).
 		const result = snapBoxMaskInteraction({
 			handleId: { kind: "scale" },
 			startParams: buildRectangleParams({ scale: 1 }),
@@ -357,12 +390,22 @@ describe("mask snapping", () => {
 		});
 
 		expect(result.params.scale).toBe(2.5);
-		expect(result.activeLines).toEqual([{ type: "vertical", position: 100 }]);
+		expect(result.activeLines).toEqual([
+			{ type: "vertical", position: -100 },
+			{ type: "vertical", position: 100 },
+		]);
 	});
 
 	test("snaps text mask movement using intrinsic text bounds", () => {
+		// "Mask" is 4 chars * 10px = 40px wide (intrinsic width, scale 1), so the half
+		// width is 20. bounds.width=200 puts the right canvas edge at x=100; centerX=0.39
+		// is x=78, and the nearest snap is the text's RIGHT edge touching it:
+		// x = 100 - 20 = 80 (|78-80| = 2 < 8) -> centerX 0.4, guide line at 100.
+		// Ignoring the text bounds would find no x candidate in range (centre is 78 away,
+		// edge is 22 away), so the x assertions fail on a text-bounds regression.
+		// centerY=-0.04 (y=-4) snaps to the vertical centre.
 		const params = buildTextMaskParams({
-			centerX: 0.03,
+			centerX: 0.39,
 			centerY: -0.04,
 		});
 		const result = textMaskDefinition.interaction.snap?.({
@@ -374,10 +417,10 @@ describe("mask snapping", () => {
 			snapThreshold,
 		});
 
-		expect(result?.params.centerX).toBe(0);
+		expect(result?.params.centerX).toBeCloseTo(0.4, 10);
 		expect(result?.params.centerY).toBe(0);
 		expect(result?.activeLines).toEqual([
-			{ type: "vertical", position: 0 },
+			{ type: "vertical", position: 100 },
 			{ type: "horizontal", position: 0 },
 		]);
 	});
@@ -495,15 +538,20 @@ describe("custom mask point insertion", () => {
 		});
 
 		expect(nextPoints.map((point) => point.id)).toEqual(["a", "new", "b", "c"]);
+		// De Casteljau split of the zero-handle segment a(-0.2,-0.1) -> b(0.2,-0.1):
+		// the new point gets handles a quarter of the segment long (0.4 / 4) along
+		// it, which is what keeps the two halves identical to the original curve.
 		expect(nextPoints[1]).toMatchObject({
 			id: "new",
 			x: 0,
 			y: -0.1,
-			inX: 0,
+			inX: -0.1,
 			inY: 0,
-			outX: 0,
+			outX: 0.1,
 			outY: 0,
 		});
+		expect(nextPoints[0]).toMatchObject({ id: "a", outX: 0, outY: 0 });
+		expect(nextPoints[2]).toMatchObject({ id: "b", inX: 0, inY: 0 });
 	});
 
 	test("builds updated custom mask params for a clicked segment", () => {

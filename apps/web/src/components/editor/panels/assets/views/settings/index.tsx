@@ -19,6 +19,10 @@ import {
 	SectionTitle,
 } from "@/components/section";
 import { BackgroundContent } from "./background";
+import { IntegrationsSettings } from "./integrations";
+import { getMcpBridge } from "@/mcp/bridge";
+import { PerformanceSettings } from "./performance";
+import { AutoHitsSettings } from "./auto-hits";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { NumberField } from "@/components/ui/number-field";
@@ -32,10 +36,10 @@ import { formatNumberForDisplay } from "@/utils/math";
 import { OcSquarePlusIcon } from "@/components/icons";
 import type { TCanvasSize } from "@/project/types";
 
-type SettingsView = "project-info" | "background";
+type SettingsView = "project-info" | "background" | "integrations";
 
 function isSettingsView(value: string): value is SettingsView {
-	return value === "project-info" || value === "background";
+	return value === "project-info" || value === "background" || value === "integrations";
 }
 
 const PRESET_LABELS: Record<string, string> = {
@@ -98,6 +102,7 @@ function useCanvasDimensionDraft({
 
 export function SettingsView() {
 	const [view, setView] = useState<SettingsView>("project-info");
+	const [hasMcpBridge] = useState(() => typeof window !== "undefined" && getMcpBridge() !== null);
 	const editor = useEditor();
 	const activeProject = useEditor((e) => e.project.getActive());
 	const { canvasPresets } = useEditorStore();
@@ -224,10 +229,12 @@ export function SettingsView() {
 					<TabsList>
 						<TabsTrigger value="project-info">Project info</TabsTrigger>
 						<TabsTrigger value="background">Background</TabsTrigger>
+						{hasMcpBridge && <TabsTrigger value="integrations">Integrations</TabsTrigger>}
 					</TabsList>
 				</Tabs>
 			}
 		>
+			{view === "integrations" && <IntegrationsSettings />}
 			{view === "project-info" && (
 				<div className="flex flex-col">
 					<Section showTopBorder={false}>
@@ -314,6 +321,8 @@ export function SettingsView() {
 							</div>
 						</SectionContent>
 					</Section>
+					<PerformanceSettings />
+					<AutoHitsSettings />
 				</div>
 			)}
 			{view === "background" && <BackgroundContent />}

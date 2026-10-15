@@ -1,7 +1,6 @@
 "use client";
 
 import { cn } from "@/utils/ui";
-import { clamp } from "@/utils/math";
 import { useRef, useState, useLayoutEffect, type ComponentProps } from "react";
 import { useFocusLock } from "@/hooks/use-focus-lock";
 import { Button } from "@/components/ui/button";
@@ -17,94 +16,12 @@ const DRAG_SENSITIVITIES = {
 
 type DragSensitivity = "default" | "slow";
 
-type ScrubRange = {
-	from: number;
-	to: number;
-	pixelsPerUnit: number;
-};
-
-type ScrubClamp = {
-	min?: number;
-	max?: number;
-};
-
-function clampScrubValue({
-	value,
-	min,
-	max,
-}: {
-	value: number;
-	min?: number;
-	max?: number;
-}): number {
-	if (min != null && max != null) return clamp({ value, min, max });
-	if (min != null) return Math.max(min, value);
-	if (max != null) return Math.min(max, value);
-	return value;
-}
-
-function getActiveRange({
-	value,
-	direction,
-	ranges,
-}: {
-	value: number;
-	direction: number;
-	ranges: readonly ScrubRange[];
-}): ScrubRange | undefined {
-	return ranges.find((range) =>
-		direction > 0
-			? value >= range.from && value < range.to
-			: value > range.from && value <= range.to,
-	);
-}
-
-function scrubAcrossRanges({
-	startValue,
-	pixelDelta,
-	ranges,
-	min,
-	max,
-}: {
-	startValue: number;
-	pixelDelta: number;
-	ranges: readonly ScrubRange[];
-	min?: number;
-	max?: number;
-}): number {
-	let currentValue = clampScrubValue({ value: startValue, min, max });
-	let remainingPixels = pixelDelta;
-
-	while (remainingPixels !== 0) {
-		const direction = Math.sign(remainingPixels);
-
-		const range = getActiveRange({ value: currentValue, direction, ranges });
-		if (!range) break;
-
-		const boundary = direction > 0 ? range.to : range.from;
-		const pixelsToBoundary =
-			Math.abs(boundary - currentValue) * range.pixelsPerUnit;
-
-		if (Math.abs(remainingPixels) <= pixelsToBoundary) {
-			currentValue += remainingPixels / range.pixelsPerUnit;
-			break;
-		}
-
-		currentValue = boundary;
-		remainingPixels -= direction * pixelsToBoundary;
-	}
-
-	return clampScrubValue({ value: currentValue, min, max });
-}
-
 interface NumberFieldProps
 	extends Omit<ComponentProps<"input">, "size" | "type"> {
 	icon?: React.ReactNode;
 	suffix?: string;
 	suffixClassName?: string;
 	dragSensitivity?: DragSensitivity;
-	scrubRanges?: readonly ScrubRange[];
-	scrubClamp?: ScrubClamp;
 	onScrub?: (value: number) => void;
 	onScrubEnd?: () => void;
 	allowExpressions?: boolean;
@@ -119,8 +36,6 @@ function NumberField({
 	suffixClassName,
 	disabled,
 	dragSensitivity = "default",
-	scrubRanges,
-	scrubClamp,
 	onScrub,
 	onScrubEnd,
 	value,
@@ -152,16 +67,21 @@ function NumberField({
 		if (ghostRef.current.textContent !== ghostValue) {
 			ghostRef.current.textContent = ghostValue;
 		}
+		// offsetLeft is the input's start inside the positioned wrapper, which
+		// includes the wrapper's own padding (the suffix is positioned from its edge).
 		const paddingLeft =
 			parseFloat(getComputedStyle(inputRef.current).paddingLeft) || 0;
-		setSuffixLeft(paddingLeft + ghostRef.current.offsetWidth);
+		setSuffixLeft(
+			inputRef.current.offsetLeft + paddingLeft + ghostRef.current.offsetWidth,
+		);
 	}, [ghostValue, suffix]);
 
 	const { containerRef: wrapperRef } = useFocusLock<HTMLDivElement>({
 		isActive: isInputFocused,
 		onDismiss: () => inputRef.current?.blur(),
 		cursor: "text",
-		allowSelector: "input, textarea, [contenteditable]",
+		// The bar of a SliderField must stay clickable while the box is being edited.
+		allowSelector: "input, textarea, [contenteditable], [role='slider']",
 	});
 
 	const handleIconPointerDown = (event: React.PointerEvent) => {
@@ -179,17 +99,10 @@ function NumberField({
 				return;
 			}
 			cumulativeDeltaRef.current += moveEvent.movementX;
-			const newValue = scrubRanges
-				? scrubAcrossRanges({
-						startValue: startValueRef.current,
-						pixelDelta: cumulativeDeltaRef.current,
-						ranges: scrubRanges,
-						min: scrubClamp?.min,
-						max: scrubClamp?.max,
-					})
-				: startValueRef.current +
-					cumulativeDeltaRef.current * DRAG_SENSITIVITIES[dragSensitivity];
-			onScrub(newValue);
+			onScrub(
+				startValueRef.current +
+					cumulativeDeltaRef.current * DRAG_SENSITIVITIES[dragSensitivity],
+			);
 		};
 
 		const handlePointerUp = () => {

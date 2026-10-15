@@ -206,7 +206,13 @@ export const useKeybindingsStore = create<KeybindingsState>()(
 	),
 );
 
-function generateKeybindingString(ev: KeyboardEvent): ShortcutKey | null {
+/** The parts of a keydown the key string is read from. */
+export type KeyEventLike = Pick<
+	KeyboardEvent,
+	"key" | "code" | "altKey" | "ctrlKey" | "metaKey" | "shiftKey" | "target"
+>;
+
+export function generateKeybindingString(ev: KeyEventLike): ShortcutKey | null {
 	const target = ev.target;
 	const modifierKey = getActiveModifier(ev);
 	const key = getPressedKey(ev);
@@ -231,7 +237,7 @@ function generateKeybindingString(ev: KeyboardEvent): ShortcutKey | null {
 	return key;
 }
 
-function getPressedKey(ev: KeyboardEvent): Key | null {
+function getPressedKey(ev: Pick<KeyboardEvent, "key" | "code">): Key | null {
 	const raw = (ev.key ?? "").toLowerCase();
 	const code = ev.code ?? "";
 
@@ -258,7 +264,9 @@ function getPressedKey(ev: KeyboardEvent): Key | null {
 	return null;
 }
 
-function getActiveModifier(ev: KeyboardEvent): ModifierKeys | null {
+function getActiveModifier(
+	ev: Pick<KeyboardEvent, "altKey" | "ctrlKey" | "metaKey" | "shiftKey">,
+): ModifierKeys | null {
 	const ctrl = isAppleDevice() ? ev.metaKey : ev.ctrlKey;
 	const alt = ev.altKey;
 	const shift = ev.shiftKey;

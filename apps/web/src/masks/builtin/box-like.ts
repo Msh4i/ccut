@@ -20,10 +20,11 @@ import { snapBoxMaskInteraction } from "@/masks/snap";
 
 const PERCENTAGE_DISPLAY: Pick<
 	NumberParamDefinition,
-	"displayMultiplier" | "step"
+	"displayMultiplier" | "step" | "unitLabel"
 > = {
 	displayMultiplier: 100,
 	step: 1,
+	unitLabel: "percent",
 };
 
 export const BOX_LIKE_MASK_PARAMS: ParamDefinition<
@@ -53,6 +54,7 @@ export const BOX_LIKE_MASK_PARAMS: ParamDefinition<
 		type: "number",
 		default: 0.6,
 		min: 1,
+		slider: { min: 1, max: 200 },
 		...PERCENTAGE_DISPLAY,
 	},
 	{
@@ -61,6 +63,7 @@ export const BOX_LIKE_MASK_PARAMS: ParamDefinition<
 		type: "number",
 		default: 0.6,
 		min: 1,
+		slider: { min: 1, max: 200 },
 		...PERCENTAGE_DISPLAY,
 	},
 	{
@@ -71,6 +74,7 @@ export const BOX_LIKE_MASK_PARAMS: ParamDefinition<
 		min: 0,
 		max: 360,
 		step: 1,
+		unitLabel: "degrees",
 	},
 	{
 		key: "scale",
@@ -79,6 +83,7 @@ export const BOX_LIKE_MASK_PARAMS: ParamDefinition<
 		default: 1,
 		min: 1,
 		max: 500,
+		slider: { min: 1, max: 500, pivot: 100 },
 		...PERCENTAGE_DISPLAY,
 	},
 	{

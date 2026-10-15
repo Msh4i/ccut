@@ -12,3 +12,8 @@
 next-env.d.ts
 
 *.tsbuildinfo
+.emoji-cache/
+# Temporary files of an interrupted asset generator run
+/public/emoji/**/*.tmp
+/public/icons/phosphor/*.tmp
+public/ort/

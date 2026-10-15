@@ -4,6 +4,8 @@ import { usePreviewInteraction } from "@/preview/hooks/use-preview-interaction";
 import type { SnapLine } from "@/preview/preview-snap";
 import { TransformHandles } from "./transform-handles";
 import { MaskHandles } from "./mask-handles";
+import { BrushOverlay } from "@/background/brush/brush-overlay";
+import { useBrushStore } from "@/background/brush/brush-store";
 import { SnapGuides } from "./snap-guides";
 import { TextEditOverlay } from "./text-edit-overlay";
 import { usePropertiesStore } from "@/components/editor/panels/properties/stores/properties-store";
@@ -28,6 +30,12 @@ export function PreviewInteractionOverlay() {
 	const isMaskMode = activeElement
 		? activeTabPerType[activeElement.type] === "masks"
 		: false;
+
+	const brushActive = useBrushStore((s) => s.active);
+	const isBrushMode =
+		brushActive &&
+		(activeElement?.type === "video" || activeElement?.type === "image") &&
+		activeTabPerType[activeElement.type] === "background";
 
 	const {
 		onPointerDown,
@@ -68,7 +76,7 @@ export function PreviewInteractionOverlay() {
 	return (
 		<div className="absolute inset-0">
 			<div
-				className="absolute inset-0 pointer-events-auto"
+				className="absolute inset-0 pointer-events-auto select-none"
 				role="application"
 				aria-label="Preview canvas"
 				style={{
@@ -92,6 +100,8 @@ export function PreviewInteractionOverlay() {
 					element={editingText.element}
 					onCommit={commitTextEdit}
 				/>
+			) : isBrushMode ? (
+				<BrushOverlay />
 			) : isMaskMode ? (
 				<MaskHandles onSnapLinesChange={setSnapLines} />
 			) : (

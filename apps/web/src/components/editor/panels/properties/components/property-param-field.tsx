@@ -1,9 +1,11 @@
 "use client";
 
-import type {
-	ParamDefinition,
-	NumberParamDefinition,
-	ParamValue,
+import type { ComponentProps } from "react";
+import {
+	getDisplayParam,
+	type ParamDefinition,
+	type NumberParamDefinition,
+	type ParamValue,
 } from "@/params";
 import {
 	formatNumberForDisplay,
@@ -12,8 +14,11 @@ import {
 } from "@/utils/math";
 import { SectionField } from "@/components/section";
 import { NumberField } from "@/components/ui/number-field";
+import { SliderField } from "@/components/ui/slider-field";
+import { resolveSliderSpec } from "@/params/slider";
 import { Switch } from "@/components/ui/switch";
 import { ColorPicker } from "@/components/ui/color-picker";
+import { FontPicker } from "@/components/ui/font-picker";
 import {
 	Select,
 	SelectContent,
@@ -40,6 +45,7 @@ export function PropertyParamField({
 		isActive: boolean;
 		isDisabled: boolean;
 		onToggle: () => void;
+		onCurveMenu?: (event: React.MouseEvent) => void;
 	};
 }) {
 	return (
@@ -50,8 +56,9 @@ export function PropertyParamField({
 					<KeyframeToggle
 						isActive={keyframe.isActive}
 						isDisabled={keyframe.isDisabled}
-						title={`Toggle ${param.label.toLowerCase()} keyframe`}
+						title={`Toggle ${param.label.toLowerCase()} keyframe${keyframe.onCurveMenu ? " (right-click: curve)" : ""}`}
 						onToggle={keyframe.onToggle}
+						onContextMenu={keyframe.onCurveMenu}
 					/>
 				) : undefined
 			}
@@ -148,11 +155,12 @@ function ParamInput({
 
 	if (param.type === "font") {
 		return (
-			<input
-				className="border-input bg-accent h-9 w-full rounded-md border px-3 text-sm outline-none"
-				value={String(value)}
-				onChange={(event) => onPreview(event.currentTarget.value)}
-				onBlur={onCommit}
+			<FontPicker
+				defaultValue={String(value)}
+				onValueChange={(family) => {
+					onPreview(family);
+					onCommit();
+				}}
 			/>
 		);
 	}
@@ -160,19 +168,26 @@ function ParamInput({
 	return null;
 }
 
-function NumberParamField({
+export function NumberParamField({
 	param,
 	value,
 	onPreview,
 	onCommit,
+	label = param.label,
+	resettable = true,
 }: {
 	param: NumberParamDefinition;
 	value: number;
 	onPreview: (value: number) => void;
 	onCommit: () => void;
+	/** Accessible name of the bar; defaults to the param label. */
+	label?: string;
+	/** Set false when `param.default` is not the real default (e.g. element-aware mask sizes). */
+	resettable?: boolean;
 }) {
-	const { min, max, step, displayMultiplier = 1 } = param;
-	const displayValue = value * displayMultiplier;
+	const displayParam = getDisplayParam({ param });
+	const { min, max, step, displayMultiplier = 1 } = displayParam;
+	const displayValue = snapToStep({ value: value * displayMultiplier, step });
 	const clampDisplayValue = (nextDisplayValue: number) =>
 		Math.max(
 			min,
@@ -207,18 +222,33 @@ function NumberParamField({
 		onCommit();
 	};
 
+	const fieldProps: ComponentProps<typeof NumberField> = {
+		icon: param.shortLabel,
+		value: draft.displayValue,
+		dragSensitivity: "slow",
+		isDefault: value === param.default,
+		onFocus: draft.onFocus,
+		onChange: draft.onChange,
+		onBlur: draft.onBlur,
+		onScrub: previewFromDisplay,
+		onScrubEnd: onCommit,
+		onReset: resettable ? handleReset : undefined,
+	};
+
+	const slider = resolveSliderSpec({ param: displayParam });
+	if (!slider) return <NumberField {...fieldProps} />;
+
 	return (
-		<NumberField
-			icon={param.shortLabel}
-			value={draft.displayValue}
-			dragSensitivity="slow"
-			isDefault={value === param.default}
-			onFocus={draft.onFocus}
-			onChange={draft.onChange}
-			onBlur={draft.onBlur}
-			onScrub={previewFromDisplay}
-			onScrubEnd={onCommit}
-			onReset={handleReset}
+		<SliderField
+			value={displayValue}
+			slider={slider}
+			step={step}
+			label={label}
+			unit={displayParam.unitLabel}
+			onPreview={previewFromDisplay}
+			onCommit={onCommit}
+			onReset={resettable ? handleReset : undefined}
+			fieldProps={fieldProps}
 		/>
 	);
 }

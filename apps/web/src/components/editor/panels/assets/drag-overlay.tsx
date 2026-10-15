@@ -1,11 +1,14 @@
 import { HugeiconsIcon } from "@hugeicons/react";
-import { UploadIcon } from "@hugeicons/core-free-icons";
+import { Link01Icon, UploadIcon } from "@hugeicons/core-free-icons";
+import { Button } from "@/components/ui/button";
 
 interface MediaDragOverlayProps {
 	isVisible: boolean;
 	isProcessing?: boolean;
 	progress?: number;
 	onClick?: () => void;
+	/** Desktop only: "Import from link". The area itself is a button, so this sits below it. */
+	onImportFromLink?: () => void;
 }
 
 export function MediaDragOverlay({
@@ -13,6 +16,7 @@ export function MediaDragOverlay({
 	isProcessing = false,
 	progress = 0,
 	onClick,
+	onImportFromLink,
 }: MediaDragOverlayProps) {
 	if (!isVisible) return null;
 
@@ -27,7 +31,7 @@ export function MediaDragOverlay({
 		onClick();
 	};
 
-	return (
+	const area = (
 		<button
 			className="bg-foreground/5 hover:bg-foreground/10 flex flex-col items-center justify-center gap-4 rounded-lg p-8 text-center"
 			type="button"
@@ -57,5 +61,22 @@ export function MediaDragOverlay({
 				</div>
 			)}
 		</button>
+	);
+	if (!onImportFromLink) return area;
+
+	return (
+		<div className="flex flex-col gap-2">
+			{area}
+			<Button
+				variant="outline"
+				size="sm"
+				className="gap-1.5 self-center"
+				disabled={isProcessing}
+				onClick={onImportFromLink}
+			>
+				<HugeiconsIcon icon={Link01Icon} />
+				Import from link
+			</Button>
+		</div>
 	);
 }

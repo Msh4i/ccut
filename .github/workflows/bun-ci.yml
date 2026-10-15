@@ -13,11 +13,26 @@ on:
     branches: [main]
     paths-ignore:
       - "*.md"
+  # Run it by hand on any branch (Actions tab or the API) before merging into main.
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ${{ matrix.os }}
+    # Windows does not block: the bun runtime itself fails there, not a test.
+    # bun 1.2.18 (packageManager) dies in the middle of the suite with
+    # "mprotect failed: 487" (runs 37211185717, 37212298678). Tried on the
+    # Windows job only: 1.3.14 got further and then panicked ("cannot resolve
+    # DirInfo for non-absolute path", run 37326567170); 1.4.2 ran the suite
+    # but its workers changed: the real AAC encoder tests time out (32 failed,
+    # run 37329006886; 24 fail on Linux too with 1.4.2). The job still runs
+    # and shows its result; the owner decides between this, dropping Windows,
+    # or moving the repo to a newer bun.
+    continue-on-error: ${{ matrix.os == 'windows-latest' }}
     strategy:
+      # One failing OS must not cancel the others: each OS's own result is needed
+      # to tell a platform problem from a general one.
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
 
@@ -39,10 +54,11 @@ jobs:
       - name: Install Rust wasm target
         run: rustup target add wasm32-unknown-unknown
 
+      # Pinned instead of "latest", so a new wasm-pack release cannot change CI.
       - name: Install wasm-pack
         uses: jetli/wasm-pack-action@v0.4.0
         with:
-          version: latest
+          version: v0.15.0
 
       - name: Cache Rust build artifacts
         uses: actions/cache@v4
@@ -53,8 +69,13 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
 
+      # A compile check of rust/wasm: the app does not use this output (it uses
+      # the npm package, or the vendored packages/opencut-wasm on branches that
+      # have it), so it is not optimised: the wasm-opt that wasm-pack downloads
+      # failed on macOS with "Only 1 table definition allowed in MVP" (the module
+      # uses reference types, which that wasm-opt run did not enable).
       - name: Build WASM
-        run: wasm-pack build rust/wasm --target bundler --out-dir pkg
+        run: wasm-pack build rust/wasm --target bundler --out-dir pkg --no-opt
 
       - name: Install Bun
         uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76
@@ -65,17 +86,18 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-1.2.18-${{ hashFiles('apps/web/bun.lock') }}
+          key: ${{ runner.os }}-bun-1.2.18-${{ hashFiles('bun.lock') }}
 
       - name: Install dependencies
-        working-directory: apps/web
-        run: bun install
+        run: bun install --frozen-lockfile
+
+      - name: Test
+        run: bun test
 
       - name: Build
         working-directory: apps/web
         run: bun run build
 
-      - name: Run tests
-        working-directory: apps/web
-        run: echo "No tests implemented yet"
-        continue-on-error: true
+      # After Build: tsc needs next-env.d.ts and .next/types, which only a build generates (both are gitignored)
+      - name: Typecheck
+        run: bun run typecheck:web

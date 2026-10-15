@@ -2,6 +2,13 @@ import type { TrackType } from "@/timeline";
 
 export const TIMELINE_AUDIO_WAVEFORM_COLOR = "rgba(255, 255, 255, 0.7)";
 
+// White ticks with a thin dark halo: readable on dark, light and purple clips.
+// Brand lime is forbidden on light backgrounds, so it is not used here.
+export const TIMELINE_BEAT_MARKER_COLOR = "#ffffff";
+export const TIMELINE_BEAT_MARKER_HALO_COLOR = "rgba(0, 0, 0, 0.65)";
+// Picked ticks: yellow with the same dark halo, distinct from white on any clip colour.
+export const TIMELINE_BEAT_MARKER_PICKED_COLOR = "#facc15";
+
 export const TIMELINE_TRACK_THEME: Record<
 	TrackType,
 	{
@@ -17,6 +24,7 @@ export const TIMELINE_TRACK_THEME: Record<
 	},
 	graphic: { elementClassName: "bg-[#BA5D7A]" },
 	effect: { elementClassName: "bg-[#5d93ba]" },
+	camera: { elementClassName: "bg-[#7a7f8c]" },
 } as const;
 
 export const SELECTED_TRACK_ROW_CLASS = "bg-accent/50";

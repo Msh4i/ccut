@@ -1,4 +1,5 @@
 import type { EditorCore } from "@/core";
+import { waitForStartGate } from "@/core/playback-start";
 import {
 	addMediaTime,
 	clampMediaTime,
@@ -20,6 +21,9 @@ export class PlaybackManager {
 	private seekListeners = new Set<(time: MediaTime) => void>();
 	private playbackTimer: number | null = null;
 	private playbackStartWallTime = 0;
+	private startGate: (() => Promise<void>) | null = null;
+	private isStarting = false;
+	private startToken = 0;
 	private playbackStartTime: MediaTime = ZERO_MEDIA_TIME;
 	private timelineScopeBound = false;
 
@@ -39,9 +43,22 @@ export class PlaybackManager {
 		this.reconcileTimelineScope();
 	}
 
+	/**
+	 * The preview's "ready to play" promise (see playback-start.ts): the first
+	 * playing-size draw is done, so the clock does not start into a freeze.
+	 */
+	setStartGate(gate: (() => Promise<void>) | null): void {
+		this.startGate = gate;
+	}
+
+	/** Space was pressed and the clock waits for the start gate. */
+	getIsStarting(): boolean {
+		return this.isStarting;
+	}
+
 	play(): void {
 		const maxTime = this.editor.timeline.getTotalDuration();
-		if (maxTime <= 0) {
+		if (maxTime <= 0 || this.isStarting) {
 			return;
 		}
 
@@ -49,19 +66,40 @@ export class PlaybackManager {
 			this.seek({ time: ZERO_MEDIA_TIME });
 		}
 
+		const gate = this.startGate;
+		if (!gate) {
+			this.begin();
+			return;
+		}
+		this.isStarting = true;
+		const token = ++this.startToken;
+		this.notify();
+		void waitForStartGate({
+			gate,
+			sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+		}).then(() => {
+			if (token !== this.startToken || !this.isStarting) return;
+			this.isStarting = false;
+			this.begin();
+		});
+	}
+
+	private begin(): void {
 		this.isPlaying = true;
 		this.startTimer();
 		this.notify();
 	}
 
 	pause(): void {
+		this.startToken += 1;
+		this.isStarting = false;
 		this.isPlaying = false;
 		this.stopTimer();
 		this.notify();
 	}
 
 	toggle(): void {
-		if (this.isPlaying) {
+		if (this.isPlaying || this.isStarting) {
 			this.pause();
 		} else {
 			this.play();

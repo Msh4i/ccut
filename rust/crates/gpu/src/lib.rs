@@ -1,8 +1,16 @@
 mod context;
+mod frame_pool;
+mod gpu_errors;
+mod upload_plan;
 
 use thiserror::Error;
 
 pub use context::GpuContext;
+pub use frame_pool::{FramePool, MAX_IDLE_FRAMES, Release};
+pub use gpu_errors::{GpuErrorLog, GpuErrorStats, errors_since};
+pub use upload_plan::{
+    ExternalCopy, ExternalCopyError, UploadPlan, plan_upload, validate_external_copy,
+};
 pub use wgpu;
 
 pub const GPU_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;

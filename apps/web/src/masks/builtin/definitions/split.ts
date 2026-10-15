@@ -245,6 +245,7 @@ export const splitMaskDefinition: MaskDefinition<"split"> = {
 			max: 100,
 			step: 1,
 			displayMultiplier: 100,
+			unitLabel: "percent",
 		},
 		{
 			key: "centerY",
@@ -255,6 +256,7 @@ export const splitMaskDefinition: MaskDefinition<"split"> = {
 			max: 100,
 			step: 1,
 			displayMultiplier: 100,
+			unitLabel: "percent",
 		},
 		{
 			key: "rotation",
@@ -264,6 +266,7 @@ export const splitMaskDefinition: MaskDefinition<"split"> = {
 			min: 0,
 			max: 360,
 			step: 1,
+			unitLabel: "degrees",
 		},
 	],
 	renderer: {

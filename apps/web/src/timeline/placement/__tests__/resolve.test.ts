@@ -574,9 +574,11 @@ describe("resolveTrackPlacement", () => {
 			resolveTrackPlacement({
 				tracks,
 				elementType: "audio",
+				// MediaTime is an integer tick count: the first span fits the 2..5 gap,
+				// the second overlaps "b" (5..7), so the whole batch must not fit this track.
 				timeSpans: [
-					buildTimeSpan({ startTime: 2.5, duration: 1 }),
-					buildTimeSpan({ startTime: 5.5, duration: 1 }),
+					buildTimeSpan({ startTime: 3, duration: 1 }),
+					buildTimeSpan({ startTime: 6, duration: 1 }),
 				],
 				strategy: { type: "firstAvailable" },
 			}),
@@ -648,7 +650,7 @@ describe("resolveTrackPlacement", () => {
 			trackId: "video-main",
 			trackIndex: 0,
 			trackType: "video",
-			adjustedStartTime: 0,
+			adjustedStartTime: ZERO_MEDIA_TIME,
 		});
 	});
 

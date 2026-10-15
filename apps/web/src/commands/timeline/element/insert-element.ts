@@ -199,6 +199,17 @@ export class InsertElementCommand extends Command {
 			return false;
 		}
 
+		// A camera whose source clip is gone later still renders (with the
+		// default camera); one created without a source is a mistake.
+		if (
+			element.type === "camera" &&
+			(typeof element.sourceElementId !== "string" ||
+				element.sourceElementId.length === 0)
+		) {
+			console.error("Camera element must have a sourceElementId");
+			return false;
+		}
+
 		return true;
 	}
 

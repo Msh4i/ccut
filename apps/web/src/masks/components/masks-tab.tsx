@@ -13,14 +13,7 @@ import { useElementPreview } from "@/timeline/hooks/use-element-preview";
 import { useMenuPreview } from "@/editor/use-menu-preview";
 import { getVisibleElementsWithBounds } from "@/preview/element-bounds";
 import { HugeiconsIcon } from "@hugeicons/react";
-import {
-	ArrowExpandIcon,
-	Delete02Icon,
-	FeatherIcon,
-	PlusSignIcon,
-	RotateClockwiseIcon,
-	TextFontIcon,
-} from "@hugeicons/core-free-icons";
+import { Delete02Icon, PlusSignIcon } from "@hugeicons/core-free-icons";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ColorPicker } from "@/components/ui/color-picker";
@@ -31,7 +24,6 @@ import {
 	DropdownMenuItem,
 	DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { NumberField } from "@/components/ui/number-field";
 import {
 	Select,
 	SelectContent,
@@ -46,12 +38,6 @@ import {
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
-	clamp,
-	formatNumberForDisplay,
-	getFractionDigitsForStep,
-	snapToStep,
-} from "@/utils/math";
-import {
 	Section,
 	SectionContent,
 	SectionField,
@@ -60,12 +46,8 @@ import {
 	SectionTitle,
 } from "@/components/section";
 import { usePropertyDraft } from "@/components/editor/panels/properties/hooks/use-property-draft";
-import {
-	OcMirrorIcon,
-	OcShapesIcon,
-	OcTextHeightIcon,
-	OcTextWidthIcon,
-} from "@/components/icons";
+import { NumberParamField } from "@/components/editor/panels/properties/components/property-param-field";
+import { OcMirrorIcon, OcShapesIcon } from "@/components/icons";
 import { cn } from "@/utils/ui";
 
 type MasksTabProps = {
@@ -432,11 +414,10 @@ function MaskParamsFields({
 			{definition.features.hasPosition &&
 				"centerX" in mask.params &&
 				"centerY" in mask.params && (
-					<SectionField label="Position">
-						<div className="flex items-center gap-2">
-							<MaskNumberField
-								className="flex-1"
-								icon="X"
+					<>
+						<SectionField label="Position X">
+							<NumberParamField
+								label="Position X"
 								param={getNumberParamDefinition({
 									definition,
 									key: "centerX",
@@ -448,9 +429,10 @@ function MaskParamsFields({
 								onPreview={previewNumberParam("centerX")}
 								onCommit={onCommit}
 							/>
-							<MaskNumberField
-								className="flex-1"
-								icon="Y"
+						</SectionField>
+						<SectionField label="Position Y">
+							<NumberParamField
+								label="Position Y"
 								param={getNumberParamDefinition({
 									definition,
 									key: "centerY",
@@ -462,18 +444,16 @@ function MaskParamsFields({
 								onPreview={previewNumberParam("centerY")}
 								onCommit={onCommit}
 							/>
-						</div>
-					</SectionField>
+						</SectionField>
+					</>
 				)}
 
 			{definition.features.sizeMode === "width-height" &&
 				"width" in mask.params &&
 				"height" in mask.params && (
-					<SectionField label="Size">
-						<div className="flex items-center gap-2">
-							<MaskNumberField
-								className="flex-1"
-								icon="W"
+					<>
+						<SectionField label="Width">
+							<NumberParamField
 								param={getNumberParamDefinition({
 									definition,
 									key: "width",
@@ -484,10 +464,11 @@ function MaskParamsFields({
 								})}
 								onPreview={previewNumberParam("width")}
 								onCommit={onCommit}
+								resettable={false}
 							/>
-							<MaskNumberField
-								className="flex-1"
-								icon="H"
+						</SectionField>
+						<SectionField label="Height">
+							<NumberParamField
 								param={getNumberParamDefinition({
 									definition,
 									key: "height",
@@ -498,16 +479,16 @@ function MaskParamsFields({
 								})}
 								onPreview={previewNumberParam("height")}
 								onCommit={onCommit}
+								resettable={false}
 							/>
-						</div>
-					</SectionField>
+						</SectionField>
+					</>
 				)}
 
 			{definition.features.sizeMode === "height-only" &&
 				"height" in mask.params && (
 					<SectionField label="Height">
-						<MaskNumberField
-							icon="H"
+						<NumberParamField
 							param={getNumberParamDefinition({
 								definition,
 								key: "height",
@@ -518,6 +499,7 @@ function MaskParamsFields({
 							})}
 							onPreview={previewNumberParam("height")}
 							onCommit={onCommit}
+							resettable={false}
 						/>
 					</SectionField>
 				)}
@@ -525,8 +507,7 @@ function MaskParamsFields({
 			{definition.features.sizeMode === "width-only" &&
 				"width" in mask.params && (
 					<SectionField label="Width">
-						<MaskNumberField
-							icon="W"
+						<NumberParamField
 							param={getNumberParamDefinition({
 								definition,
 								key: "width",
@@ -537,16 +518,14 @@ function MaskParamsFields({
 							})}
 							onPreview={previewNumberParam("width")}
 							onCommit={onCommit}
+							resettable={false}
 						/>
 					</SectionField>
 				)}
 
 			{definition.features.sizeMode === "uniform" && "scale" in mask.params && (
 				<SectionField label="Scale">
-					<MaskNumberField
-						icon={
-							isTextMask(mask) ? <HugeiconsIcon icon={ArrowExpandIcon} /> : "S"
-						}
+					<NumberParamField
 						param={getNumberParamDefinition({
 							definition,
 							key: "scale",
@@ -563,8 +542,7 @@ function MaskParamsFields({
 
 			{definition.features.hasRotation && "rotation" in mask.params && (
 				<SectionField label="Rotation">
-					<MaskNumberField
-						icon={<HugeiconsIcon icon={RotateClockwiseIcon} />}
+					<NumberParamField
 						param={getNumberParamDefinition({
 							definition,
 							key: "rotation",
@@ -580,8 +558,7 @@ function MaskParamsFields({
 			)}
 
 			<SectionField label="Feather">
-				<MaskNumberField
-					icon={<HugeiconsIcon icon={FeatherIcon} />}
+				<NumberParamField
 					param={featherParam}
 					value={getMaskNumber({
 						params: mask.params,
@@ -594,28 +571,24 @@ function MaskParamsFields({
 
 			<SectionField label="Stroke">
 				<div className="flex flex-col gap-2">
-					<div className="flex items-center gap-2">
-						<MaskNumberField
-							className="flex-1"
-							icon="W"
-							param={strokeWidthParam}
-							value={getMaskNumber({
-								params: mask.params,
-								key: "strokeWidth",
-							})}
-							onPreview={previewNumberParam("strokeWidth")}
-							onCommit={onCommit}
-						/>
-						<ColorPicker
-							className=""
-							value={mask.params.strokeColor.replace(/^#/, "").toUpperCase()}
-							onChange={(color) => previewStrokeColor(`#${color}`)}
-							onChangeEnd={(color) => {
-								previewStrokeColor(`#${color}`);
-								onCommit();
-							}}
-						/>
-					</div>
+					<NumberParamField
+						param={strokeWidthParam}
+						value={getMaskNumber({
+							params: mask.params,
+							key: "strokeWidth",
+						})}
+						onPreview={previewNumberParam("strokeWidth")}
+						onCommit={onCommit}
+					/>
+					<ColorPicker
+						className=""
+						value={mask.params.strokeColor.replace(/^#/, "").toUpperCase()}
+						onChange={(color) => previewStrokeColor(`#${color}`)}
+						onChangeEnd={(color) => {
+							previewStrokeColor(`#${color}`);
+							onCommit();
+						}}
+					/>
 					{strokeAlignParam ? (
 						<Select
 							value={mask.params.strokeAlign}
@@ -650,6 +623,7 @@ const LETTER_SPACING_PARAM: NumberParamDefinition = {
 	min: -100,
 	max: 500,
 	step: 1,
+	slider: { min: -20, max: 50 },
 };
 
 const LINE_HEIGHT_PARAM: NumberParamDefinition = {
@@ -660,6 +634,7 @@ const LINE_HEIGHT_PARAM: NumberParamDefinition = {
 	min: 0.1,
 	max: 10,
 	step: 0.1,
+	slider: { min: 0.5, max: 3 },
 };
 
 function TextMaskFields({
@@ -704,33 +679,28 @@ function TextMaskFields({
 				/>
 			</SectionField>
 			<SectionField label="Size">
-				<MaskNumberField
-					icon={<HugeiconsIcon icon={TextFontIcon} />}
+				<NumberParamField
 					param={fontSizeParam}
 					value={mask.params.fontSize}
 					onPreview={previewNumberParam("fontSize")}
 					onCommit={onCommit}
 				/>
 			</SectionField>
-			<SectionField label="Spacing">
-				<div className="flex items-start gap-2">
-					<MaskNumberField
-						className="w-1/2"
-						icon={<OcTextWidthIcon size={14} />}
-						param={LETTER_SPACING_PARAM}
-						value={mask.params.letterSpacing ?? 0}
-						onPreview={previewNumberParam("letterSpacing")}
-						onCommit={onCommit}
-					/>
-					<MaskNumberField
-						className="w-1/2"
-						icon={<OcTextHeightIcon size={14} />}
-						param={LINE_HEIGHT_PARAM}
-						value={mask.params.lineHeight ?? 1.2}
-						onPreview={previewNumberParam("lineHeight")}
-						onCommit={onCommit}
-					/>
-				</div>
+			<SectionField label="Letter spacing">
+				<NumberParamField
+					param={LETTER_SPACING_PARAM}
+					value={mask.params.letterSpacing ?? 0}
+					onPreview={previewNumberParam("letterSpacing")}
+					onCommit={onCommit}
+				/>
+			</SectionField>
+			<SectionField label="Line height">
+				<NumberParamField
+					param={LINE_HEIGHT_PARAM}
+					value={mask.params.lineHeight ?? 1.2}
+					onPreview={previewNumberParam("lineHeight")}
+					onCommit={onCommit}
+				/>
 			</SectionField>
 		</>
 	);
@@ -763,75 +733,6 @@ function getMaskNumber<
 	}
 
 	return value;
-}
-
-function MaskNumberField({
-	param,
-	value,
-	onPreview,
-	onCommit,
-	icon,
-	className,
-}: {
-	param: NumberParamDefinition;
-	value: number;
-	onPreview: (value: number) => void;
-	onCommit: () => void;
-	icon?: React.ReactNode;
-	className?: string;
-}) {
-	const isPercent = param.unit === "percent";
-	const percentMax = param.max ?? 100;
-	const displayMultiplier = isPercent
-		? 100 / percentMax
-		: (param.displayMultiplier ?? 1);
-	const min = isPercent ? 0 : param.min;
-	const max = isPercent ? 100 : param.max;
-	const step = isPercent ? 1 : param.step;
-	const displayValue = value * displayMultiplier;
-	const maxFractionDigits = getFractionDigitsForStep({ step });
-
-	const clampDisplay = (nextDisplayValue: number) =>
-		max !== undefined
-			? clamp({ value: nextDisplayValue, min, max })
-			: Math.max(min, nextDisplayValue);
-
-	const previewFromDisplay = (nextDisplayValue: number) => {
-		onPreview(
-			clampDisplay(snapToStep({ value: nextDisplayValue, step })) /
-				displayMultiplier,
-		);
-	};
-
-	const draft = usePropertyDraft({
-		displayValue: formatNumberForDisplay({
-			value: displayValue,
-			maxFractionDigits,
-		}),
-		parse: (input) => {
-			const parsed = parseFloat(input);
-			if (Number.isNaN(parsed)) return null;
-			return (
-				clampDisplay(snapToStep({ value: parsed, step })) / displayMultiplier
-			);
-		},
-		onPreview,
-		onCommit,
-	});
-
-	return (
-		<NumberField
-			className={className}
-			icon={icon}
-			value={draft.displayValue}
-			dragSensitivity="slow"
-			onFocus={draft.onFocus}
-			onChange={draft.onChange}
-			onBlur={draft.onBlur}
-			onScrub={previewFromDisplay}
-			onScrubEnd={onCommit}
-		/>
-	);
 }
 
 function EmptyView({ onAddMask }: EmptyViewProps) {

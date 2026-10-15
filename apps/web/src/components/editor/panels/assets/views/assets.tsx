@@ -5,6 +5,11 @@ import { useMemo, useState } from "react";
 import { PanelView } from "@/components/editor/panels/assets/views/base-panel";
 import { MediaDragOverlay } from "@/components/editor/panels/assets/drag-overlay";
 import { DraggableItem } from "@/components/editor/panels/assets/draggable-item";
+import {
+	ImportMenuButton,
+	useLinkImportBridge,
+} from "@/components/editor/panels/assets/import-menu-button";
+import { LinkImportDialog } from "@/components/editor/panels/assets/link-import-dialog";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import {
@@ -49,7 +54,6 @@ import { MASKABLE_ELEMENT_TYPES } from "@/timeline";
 import type { MediaAsset } from "@/media/types";
 import { cn } from "@/utils/ui";
 import {
-	CloudUploadIcon,
 	GridViewIcon,
 	LeftToRightListDashIcon,
 	SortingOneNineIcon,
@@ -122,6 +126,18 @@ export function MediaView() {
 			onFilesSelected: (files) => processFiles({ files }),
 		});
 
+	// "Import from link" (desktop only): the downloaded File goes through processFiles like a
+	// picked file; it counted as imported when an asset now holds that very File.
+	const linkBridge = useLinkImportBridge();
+	const [isLinkImportOpen, setIsLinkImportOpen] = useState(false);
+	const openLinkImport = linkBridge ? () => setIsLinkImportOpen(true) : null;
+	const importLinkedFile = async (file: File) => {
+		await processFiles({ files: [file] });
+		return editor.media
+			.getAssets()
+			.some((asset) => asset.file === file);
+	};
+
 	const handleRemove = ({
 		event,
 		ids,
@@ -190,6 +206,14 @@ export function MediaView() {
 	return (
 		<>
 			<input {...fileInputProps} />
+			{linkBridge && (
+				<LinkImportDialog
+					open={isLinkImportOpen}
+					onOpenChange={setIsLinkImportOpen}
+					bridge={linkBridge}
+					importFile={importLinkedFile}
+				/>
+			)}
 
 			<PanelView
 				title="Assets"
@@ -202,6 +226,7 @@ export function MediaView() {
 						sortOrder={mediaSortOrder}
 						onSort={handleSort}
 						onImport={openFilePicker}
+						onImportFromLink={openLinkImport}
 					/>
 				}
 				className={cn(isDragOver && "bg-accent/30")}
@@ -214,6 +239,7 @@ export function MediaView() {
 						isProcessing={isProcessing}
 						progress={progress}
 						onClick={openFilePicker}
+						onImportFromLink={openLinkImport ?? undefined}
 					/>
 				) : (
 					<SelectableSurface
@@ -513,6 +539,7 @@ function MediaActions({
 	sortOrder,
 	onSort,
 	onImport,
+	onImportFromLink,
 }: {
 	mediaViewMode: MediaViewMode;
 	setMediaViewMode: (mode: MediaViewMode) => void;
@@ -521,6 +548,7 @@ function MediaActions({
 	sortOrder: MediaSortOrder;
 	onSort: ({ key }: { key: MediaSortKey }) => void;
 	onImport: () => void;
+	onImportFromLink: (() => void) | null;
 }) {
 	return (
 		<div className="flex gap-1.5">
@@ -604,16 +632,11 @@ function MediaActions({
 					</TooltipContent>
 				</Tooltip>
 			</TooltipProvider>
-			<Button
-				variant="outline"
-				onClick={onImport}
+			<ImportMenuButton
 				disabled={isProcessing}
-				size="sm"
-				className="items-center justify-center gap-1.5"
-			>
-				<HugeiconsIcon icon={CloudUploadIcon} />
-				Import
-			</Button>
+				onImportFile={onImport}
+				onImportFromLink={onImportFromLink}
+			/>
 		</div>
 	);
 }

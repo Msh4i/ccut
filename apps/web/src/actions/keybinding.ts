@@ -1,17 +1,22 @@
 import type { TActionWithOptionalArgs } from "./types";
 
+const MODIFIER_KEYS = [
+	"ctrl",
+	"alt",
+	"shift",
+	"ctrl+shift",
+	"alt+shift",
+	"ctrl+alt",
+	"ctrl+alt+shift",
+] as const;
+
 /**
  * Alt is also regarded as macOS OPTION (⌥) key
  * Ctrl is also regarded as macOS COMMAND (⌘) key (NOTE: this differs from HTML Keyboard spec where COMMAND is Meta key!)
  */
-export type ModifierKeys =
-	| "ctrl"
-	| "alt"
-	| "shift"
-	| "ctrl+shift"
-	| "alt+shift"
-	| "ctrl+alt"
-	| "ctrl+alt+shift";
+export type ModifierKeys = (typeof MODIFIER_KEYS)[number];
+
+const MODIFIER_KEY_SET: ReadonlySet<string> = new Set(MODIFIER_KEYS);
 
 const KEYS = [
 	"a", "b", "c", "d", "e", "f", "g", "h", "i", "j",
@@ -37,6 +42,23 @@ export type ModifierBasedShortcutKey = `${ModifierKeys}+${Key}`;
 export type SingleCharacterShortcutKey = `${Key}`;
 
 export type ShortcutKey = ModifierBasedShortcutKey | SingleCharacterShortcutKey;
+
+export function isShortcutKey(value: string): value is ShortcutKey {
+	if (isKey(value)) {
+		return true;
+	}
+
+	// No `Key` contains "+", so the last "+" always separates modifier from key.
+	const separatorIndex = value.lastIndexOf("+");
+	if (separatorIndex === -1) {
+		return false;
+	}
+
+	return (
+		MODIFIER_KEY_SET.has(value.slice(0, separatorIndex)) &&
+		isKey(value.slice(separatorIndex + 1))
+	);
+}
 
 export type KeybindingConfig = {
 	[key in ShortcutKey]?: TActionWithOptionalArgs;

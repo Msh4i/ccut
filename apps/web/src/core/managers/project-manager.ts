@@ -8,6 +8,9 @@ import type {
 	TTimelineViewState,
 } from "@/project/types";
 import type { ExportOptions, ExportResult, ExportState } from "@/export";
+import { getDesktopExportBridge } from "@/export/desktop-bridge";
+import { createEtaEstimator } from "@/export/eta";
+import { IDLE_EXPORT_STATE } from "@/export/job-view";
 import { storageService } from "@/services/storage/service";
 import { toast } from "sonner";
 import { generateUUID } from "@/utils/id";
@@ -24,9 +27,9 @@ import {
 	runStorageMigrations,
 	type MigrationProgress,
 } from "@/services/storage/migrations";
-import { loadFonts } from "@/fonts/google-fonts";
+import { ensureCustomFontsRegistered } from "@/fonts/custom-fonts";
+import { prepareAndReportFonts } from "@/fonts/report-font-problems";
 import { DEFAULTS } from "@/timeline/defaults";
-import { getElementFontFamilies } from "@/timeline/element-utils";
 import { getRaisedProjectFpsForImportedMedia } from "@/fps/utils";
 import type { MediaAsset } from "@/media/types";
 
@@ -51,12 +54,11 @@ export class ProjectManager {
 		toVersion: null,
 		projectName: null,
 	};
-	private exportState: ExportState = {
-		isExporting: false,
-		progress: 0,
-		result: null,
-	};
-	private exportCancelRequested = false;
+	private exportState: ExportState = IDLE_EXPORT_STATE;
+	private exportAbort: AbortController | null = null;
+	private answerAudioQuestion: ((exportAnyway: boolean) => void) | null = null;
+	// Ids being deleted: no save may write them back meanwhile.
+	private deletingIds = new Set<string>();
 
 	constructor(private editor: EditorCore) {}
 
@@ -74,7 +76,11 @@ export class ProjectManager {
 					this.notify();
 				},
 			});
-		})();
+		})().catch((error: unknown) => {
+			// Allow a retry on the next call instead of caching the failure.
+			this.storageMigrationPromise = null;
+			throw error;
+		});
 
 		await this.storageMigrationPromise;
 	}
@@ -132,11 +138,14 @@ export class ProjectManager {
 		}
 
 		this.editor.save.pause();
-		await this.ensureStorageMigrations();
-		this.editor.media.clearAllAssets();
-		this.editor.scenes.clearScenes();
+		// Starts reading the font library now, in parallel with the project.
+		void ensureCustomFontsRegistered();
 
 		try {
+			await this.ensureStorageMigrations();
+			this.editor.media.clearAllAssets();
+			this.editor.scenes.clearScenes();
+
 			const result = await storageService.loadProject({ id });
 			if (!result) {
 				throw new Error(`Project with id ${id} not found`);
@@ -156,15 +165,7 @@ export class ProjectManager {
 
 			await this.editor.media.loadProjectMedia({ projectId: id });
 
-			await loadFonts({
-				families: [
-					...new Set(
-						(project.scenes ?? []).flatMap((scene) =>
-							getElementFontFamilies({ tracks: scene.tracks }),
-						),
-					),
-				],
-			});
+			await prepareAndReportFonts({ scenes: project.scenes ?? [] });
 
 			if (!project.metadata.thumbnail) {
 				try {
@@ -188,57 +189,155 @@ export class ProjectManager {
 
 	async saveCurrentProject(): Promise<void> {
 		if (!this.active) return;
+		if (this.deletingIds.has(this.active.metadata.id)) return;
 
-		try {
-			const scenes = this.editor.scenes.getScenes();
-			const updatedProject = {
-				...this.active,
-				scenes,
-				metadata: {
-					...this.active.metadata,
-					duration: getProjectDurationFromScenes({ scenes }),
-					updatedAt: new Date(),
-				},
-			};
+		// A failed write rejects: SaveManager keeps the project dirty and retries,
+		// and explicit saves (exit) must not report success.
+		const scenes = this.editor.scenes.getScenes();
+		const updatedProject = {
+			...this.active,
+			scenes,
+			metadata: {
+				...this.active.metadata,
+				duration: getProjectDurationFromScenes({ scenes }),
+				updatedAt: new Date(),
+			},
+		};
 
-			await storageService.saveProject({ project: updatedProject });
-			this.active = updatedProject;
-			this.updateMetadata(updatedProject);
-		} catch (error) {
-			console.error("Failed to save project:", error);
+		await storageService.saveProject({ project: updatedProject });
+
+		// The project may have changed while the write ran. Take over only what
+		// was saved, and leave a project that was closed, switched or deleted alone.
+		if (this.active?.metadata.id !== updatedProject.metadata.id) {
+			if (this.savedProjects.some((p) => p.id === updatedProject.metadata.id)) {
+				this.updateMetadata(updatedProject);
+			}
+			return;
 		}
+		this.active = {
+			...this.active,
+			scenes: updatedProject.scenes,
+			metadata: {
+				...this.active.metadata,
+				duration: updatedProject.metadata.duration,
+				updatedAt: updatedProject.metadata.updatedAt,
+			},
+		};
+		this.updateMetadata(this.active);
 	}
 
+	/**
+	 * Runs an export and keeps `exportState` honest: whatever happens (a result, a throw), the
+	 * state ends idle with the result. A stuck `isExporting` would freeze the preview (it reads
+	 * the flag on every frame) and lock the export window.
+	 */
 	async export({ options }: { options: ExportOptions }): Promise<ExportResult> {
-		this.exportCancelRequested = false;
-		this.exportState = { isExporting: true, progress: 0, result: null };
-		this.notify();
+		const controller = new AbortController();
+		this.exportAbort = controller;
+		const eta = createEtaEstimator();
+		this.setExportState({ ...IDLE_EXPORT_STATE, isExporting: true });
 
-		const result = await this.editor.renderer.exportProject({
-			options,
-			onProgress: ({ progress }) => {
-				this.exportState = { ...this.exportState, progress };
-				this.notify();
-			},
-			onCancel: () => this.exportCancelRequested,
-		});
-
-		this.exportState = {
-			isExporting: false,
-			progress: this.exportState.progress,
-			result,
-		};
-		this.notify();
-
+		let result: ExportResult = { success: false, error: "Unknown export error" };
+		try {
+			// Playback would keep the audio running and decoders busy under the export.
+			this.editor.playback.pause();
+			result = await this.editor.renderer.exportProject({
+				options,
+				// Export burns in whatever font is available, so warn about missing ones.
+				// Run once the destination is chosen: the save dialog comes first.
+				prepare: () => prepareAndReportFonts({ scenes: this.editor.scenes.getScenes() }),
+				signal: controller.signal,
+				onPhase: (update) => {
+					if (update.phase !== "encoding") {
+						this.setExportState({ ...this.exportState, phase: update.phase, etaSeconds: null });
+						return;
+					}
+					const { framesDone, frameCount } = update;
+					this.setExportState({
+						...this.exportState,
+						phase: "encoding",
+						framesDone,
+						frameCount,
+						progress: frameCount > 0 ? framesDone / frameCount : 0,
+						etaSeconds: eta.update({ framesDone, frameCount }),
+					});
+				},
+				confirmUnreadableAudio: (question) => this.askAboutUnreadableAudio({ question, signal: controller.signal }),
+			});
+		} catch (error) {
+			// exportProject reports its failures as a result; this is a bug or something unforeseen.
+			console.error("Export failed:", error);
+			result = { success: false, error: error instanceof Error ? error.message : "Unknown export error" };
+		} finally {
+			// Only the export that is still current ends the shared state: a newer one owns it now.
+			if (this.exportAbort === controller) {
+				this.exportAbort = null;
+				this.answerAudioQuestion = null;
+				this.setExportState({ ...IDLE_EXPORT_STATE, progress: this.exportState.progress, result });
+			}
+		}
 		return result;
 	}
 
-	cancelExport(): void {
-		this.exportCancelRequested = true;
+	/** Waits for "Export anyway" (true) or "Cancel" (false); cancelling the export answers false. */
+	private askAboutUnreadableAudio({
+		question,
+		signal,
+	}: {
+		question: NonNullable<ExportState["audioQuestion"]>;
+		signal: AbortSignal;
+	}): Promise<boolean> {
+		return new Promise((resolve) => {
+			const answer = (exportAnyway: boolean) => {
+				signal.removeEventListener("abort", onAbort);
+				this.answerAudioQuestion = null;
+				this.setExportState({ ...this.exportState, audioQuestion: null });
+				resolve(exportAnyway);
+			};
+			const onAbort = () => answer(false);
+			signal.addEventListener("abort", onAbort);
+			this.answerAudioQuestion = answer;
+			this.setExportState({ ...this.exportState, audioQuestion: question });
+		});
 	}
 
+	answerUnreadableAudio({ exportAnyway }: { exportAnyway: boolean }): void {
+		this.answerAudioQuestion?.(exportAnyway);
+	}
+
+	/**
+	 * Stops the running export at its next check. The state says "cancelling" at once: the audio
+	 * mix cannot be interrupted, so the export can run on for a while and the window must show
+	 * that the click was heard. Not while the file is being finished: from there the exporter no
+	 * longer looks at the signal and the file is saved, so a cancel would only mislead.
+	 */
+	cancelExport(): void {
+		if (!this.exportAbort || this.exportAbort.signal.aborted) return;
+		if (this.exportState.phase === "finalizing") return;
+		this.setExportState({ ...this.exportState, cancelling: true });
+		this.exportAbort.abort();
+	}
+
+	/** Shows the file just exported in its folder (desktop app); false if there is none. */
+	async revealExportedFile(): Promise<boolean> {
+		const token = this.exportState.result?.file?.revealToken;
+		const bridge = getDesktopExportBridge();
+		if (!token || !bridge) return false;
+		try {
+			return await bridge.reveal({ token });
+		} catch {
+			return false;
+		}
+	}
+
+	/** Back to the settings after a result. Never while an export runs: it would hide a live export. */
 	clearExportState(): void {
-		this.exportState = { isExporting: false, progress: 0, result: null };
+		if (this.exportState.isExporting) return;
+		this.setExportState(IDLE_EXPORT_STATE);
+	}
+
+	private setExportState(state: ExportState): void {
+		this.exportState = state;
 		this.notify();
 	}
 
@@ -277,17 +376,25 @@ export class ProjectManager {
 		const uniqueIds = Array.from(new Set(ids));
 		if (uniqueIds.length === 0) return;
 
+		const idSet = new Set(uniqueIds);
+		const isDeletingActive =
+			this.active !== null && idSet.has(this.active.metadata.id);
+		for (const id of uniqueIds) this.deletingIds.add(id);
+
 		try {
+			// A save that is already running must finish first, or it could write
+			// the deleted record back.
+			if (isDeletingActive) await this.editor.save.waitForIdle();
+
 			await Promise.all(
-				uniqueIds.map((id) =>
-					Promise.all([
-						storageService.deleteProjectMedia({ projectId: id }),
-						storageService.deleteProject({ id }),
-					]),
-				),
+				uniqueIds.map(async (id) => {
+					// Record first: a failed record delete must not leave a project
+					// whose media is already gone.
+					await storageService.deleteProject({ id });
+					await storageService.deleteProjectMedia({ projectId: id });
+				}),
 			);
 
-			const idSet = new Set(uniqueIds);
 			this.savedProjects = this.savedProjects.filter(
 				(project) => !idSet.has(project.id),
 			);
@@ -297,6 +404,7 @@ export class ProjectManager {
 
 			if (shouldClearActive) {
 				this.active = null;
+				this.editor.save.discard();
 				this.editor.media.clearAllAssets();
 				this.editor.scenes.clearScenes();
 			}
@@ -304,11 +412,16 @@ export class ProjectManager {
 			this.notify();
 		} catch (error) {
 			console.error("Failed to delete projects:", error);
+			// Saves were skipped while deleting: the open project still has changes to store.
+			if (isDeletingActive) this.editor.save.markDirty({ force: true });
+		} finally {
+			for (const id of uniqueIds) this.deletingIds.delete(id);
 		}
 	}
 
 	closeProject(): void {
 		this.active = null;
+		this.editor.save.discard();
 		this.notify();
 
 		this.editor.media.clearAllAssets();
@@ -322,6 +435,19 @@ export class ProjectManager {
 		id: string;
 		name: string;
 	}): Promise<void> {
+		// The open project is renamed in memory and stored by autosave: a
+		// load-modify-save here could overwrite a newer autosave with stale scenes.
+		if (this.active?.metadata.id === id) {
+			this.active = {
+				...this.active,
+				metadata: { ...this.active.metadata, name, updatedAt: new Date() },
+			};
+			this.notify();
+			this.updateMetadata(this.active);
+			this.editor.save.markDirty({ force: true });
+			return;
+		}
+
 		try {
 			const result = await storageService.loadProject({ id });
 			if (!result) {
@@ -341,11 +467,6 @@ export class ProjectManager {
 			};
 
 			await storageService.saveProject({ project: updatedProject });
-
-			if (this.active?.metadata.id === id) {
-				this.active = updatedProject;
-				this.notify();
-			}
 
 			this.updateMetadata(updatedProject);
 		} catch (error) {
@@ -445,28 +566,40 @@ export class ProjectManager {
 				};
 			});
 
-			await Promise.all(
-				duplicationPlans.map(({ newProject }) =>
-					storageService.saveProject({ project: newProject }),
-				),
-			);
+			// Media first and the record last: a project only exists once its media
+			// is complete. On failure remove what was written for the new ids.
+			try {
+				await Promise.all(
+					duplicationPlans.map(async ({ sourceProjectId, newProjectId }) => {
+						const sourceMediaAssets = await storageService.loadAllMediaAssets({
+							projectId: sourceProjectId,
+						});
 
-			await Promise.all(
-				duplicationPlans.map(async ({ sourceProjectId, newProjectId }) => {
-					const sourceMediaAssets = await storageService.loadAllMediaAssets({
-						projectId: sourceProjectId,
-					});
+						await Promise.all(
+							sourceMediaAssets.map((mediaAsset) =>
+								storageService.saveMediaAsset({
+									projectId: newProjectId,
+									mediaAsset,
+								}),
+							),
+						);
+					}),
+				);
 
-					await Promise.all(
-						sourceMediaAssets.map((mediaAsset) =>
-							storageService.saveMediaAsset({
-								projectId: newProjectId,
-								mediaAsset,
-							}),
-						),
-					);
-				}),
-			);
+				await Promise.all(
+					duplicationPlans.map(({ newProject }) =>
+						storageService.saveProject({ project: newProject }),
+					),
+				);
+			} catch (error) {
+				await Promise.allSettled(
+					duplicationPlans.map(async ({ newProjectId }) => {
+						await storageService.deleteProject({ id: newProjectId });
+						await storageService.deleteProjectMedia({ projectId: newProjectId });
+					}),
+				);
+				throw error;
+			}
 
 			for (const { newProject } of duplicationPlans) {
 				this.updateMetadata(newProject);
@@ -535,13 +668,15 @@ export class ProjectManager {
 		if (!this.active) return;
 
 		try {
-			const didUpdateThumbnail = await this.updateThumbnailFromTimeline();
-			if (didUpdateThumbnail) {
-				await this.editor.save.flush();
-			}
+			await this.updateThumbnailFromTimeline();
 		} catch (error) {
 			console.error("Failed to generate project thumbnail on exit:", error);
 		}
+
+		// Rejects when the final save fails, so the caller can keep the project
+		// open instead of dropping unsaved changes. A thumbnail problem must not
+		// skip this save.
+		await this.editor.save.flush();
 	}
 
 	getFilteredAndSortedProjects({

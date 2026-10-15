@@ -14,6 +14,8 @@ import { usePropertiesStore } from "./stores/properties-store";
 import { getPropertiesConfig } from "./registry";
 import { cn } from "@/utils/ui";
 import { EmptyView } from "./empty-view";
+import { KeyframePresetsTab } from "@/animation/components/keyframe-presets-tab";
+import { resolveKeyframeTargets } from "@/timeline/playhead-keyframes";
 
 export function PropertiesPanel() {
 	const editor = useEditor();
@@ -31,11 +33,19 @@ export function PropertiesPanel() {
 	}
 
 	if (selectedElements.length > 1) {
+		const tracks = editor.scenes.getActiveSceneOrNull()?.tracks;
+		const targets = tracks
+			? resolveKeyframeTargets({ tracks, selected: selectedElements })
+			: [];
 		return (
-			<div className="panel bg-background flex h-full flex-col items-center justify-center overflow-hidden rounded-sm border">
-				<p className="text-muted-foreground text-sm">
-					{selectedElements.length} elements selected.0
+			<div className="panel bg-background flex h-full flex-col overflow-hidden rounded-sm border">
+				<p className="text-muted-foreground px-4 py-3 text-sm">
+					{selectedElements.length} elements selected. Keyframe presets go on
+					every one that can take them.
 				</p>
+				<ScrollArea className="flex-1">
+					<KeyframePresetsTab targets={targets} />
+				</ScrollArea>
 			</div>
 		);
 	}

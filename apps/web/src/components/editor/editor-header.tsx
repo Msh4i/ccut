@@ -6,19 +6,18 @@ import {
 	DropdownMenu,
 	DropdownMenuContent,
 	DropdownMenuItem,
-	DropdownMenuSeparator,
 	DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
-import Link from "next/link";
 import { RenameProjectDialog } from "@/project/components/rename-project-dialog";
 import { DeleteProjectDialog } from "@/project/components/delete-project-dialog";
+import { UnsavedExitDialog } from "@/project/components/unsaved-exit-dialog";
+import { decideExit, type ExitAnswer } from "@/project/exit-flow";
 import { useRouter } from "next/navigation";
-import { FaDiscord } from "react-icons/fa6";
 import { ExportButton } from "./export-button";
+import { McpBadge } from "@/mcp/mcp-badge";
 import { FeedbackPopover } from "@/feedback/components/feedback-popover";
 import { ThemeToggle } from "../theme-toggle";
 import { DEFAULT_LOGO_URL } from "@/site/brand";
-import { SOCIAL_LINKS } from "@/site/social";
 import { toast } from "sonner";
 import { useEditor } from "@/editor/use-editor";
 import { CommandIcon, Logout05Icon } from "@hugeicons/core-free-icons";
@@ -35,7 +34,8 @@ export function EditorHeader() {
 				<EditableProjectName />
 			</div>
 			<nav className="flex items-center gap-2">
-				<FeedbackPopover />
+				<McpBadge />
+				{process.env.NEXT_PUBLIC_DESKTOP !== "1" && <FeedbackPopover />}
 				<ExportButton />
 				<ThemeToggle />
 			</nav>
@@ -48,22 +48,42 @@ function ProjectDropdown() {
 		"delete" | "rename" | "shortcuts" | null
 	>(null);
 	const [isExiting, setIsExiting] = useState(false);
+	const [isUnsavedExitOpen, setIsUnsavedExitOpen] = useState(false);
 	const router = useRouter();
 	const editor = useEditor();
 	const activeProject = useEditor((e) => e.project.getActive());
+
+	const leaveProject = () => {
+		editor.project.closeProject();
+		router.push("/projects");
+	};
 
 	const handleExit = async () => {
 		if (isExiting) return;
 		setIsExiting(true);
 
+		let saved = true;
 		try {
 			await editor.project.prepareExit();
-			editor.project.closeProject();
 		} catch (error) {
 			console.error("Failed to prepare project exit:", error);
-		} finally {
-			editor.project.closeProject();
-			router.push("/projects");
+			saved = false;
+		}
+
+		// A failed final save must not silently drop the latest changes: ask first.
+		if (decideExit({ saved, answer: null }) === "ask") {
+			setIsExiting(false);
+			setIsUnsavedExitOpen(true);
+			return;
+		}
+		leaveProject();
+	};
+
+	const handleUnsavedExitAnswer = ({ answer }: { answer: ExitAnswer }) => {
+		setIsUnsavedExitOpen(false);
+		if (decideExit({ saved: false, answer }) === "exit") {
+			setIsExiting(true);
+			leaveProject();
 		}
 	};
 
@@ -136,18 +156,6 @@ function ProjectDropdown() {
 					>
 						Shortcuts
 					</DropdownMenuItem>
-
-					<DropdownMenuSeparator />
-
-					<DropdownMenuItem asChild icon={<FaDiscord className="size-4!" />}>
-						<Link
-							href={SOCIAL_LINKS.discord}
-							target="_blank"
-							rel="noopener noreferrer"
-						>
-							Discord
-						</Link>
-					</DropdownMenuItem>
 				</DropdownMenuContent>
 			</DropdownMenu>
 			<RenameProjectDialog
@@ -165,6 +173,11 @@ function ProjectDropdown() {
 			<ShortcutsDialog
 				isOpen={openDialog === "shortcuts"}
 				onOpenChange={(isOpen) => setOpenDialog(isOpen ? "shortcuts" : null)}
+			/>
+			<UnsavedExitDialog
+				isOpen={isUnsavedExitOpen}
+				onLeave={() => handleUnsavedExitAnswer({ answer: "leave" })}
+				onStay={() => handleUnsavedExitAnswer({ answer: "stay" })}
 			/>
 		</>
 	);

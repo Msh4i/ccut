@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type {
+	CameraElement,
 	EffectElement,
 	GraphicElement,
 	ImageElement,
@@ -21,13 +22,32 @@ import {
 	MusicNote03Icon,
 	MagicWand05Icon,
 	DashboardSpeed02Icon,
+	Motion01Icon,
+	KeyframeIcon,
+	ColorPickerIcon,
+	FocusPointIcon,
+	ThreeDViewIcon,
+	Video01Icon,
 } from "@hugeicons/core-free-icons";
 import { ElementParamsTab } from "./components/element-params-tab";
 import { ClipEffectsTab, StandaloneEffectTab } from "@/effects/components/effects-tab";
 import { MasksTab } from "@/masks/components/masks-tab";
 import { SpeedTab } from "@/speed/components/speed-tab";
 import { GraphicTab } from "@/graphics/components/graphic-tab";
+import { AnimationTab } from "@/animation/components/animation-tab";
+import { BackgroundTab } from "@/background/components/background-tab";
+import { KeyframePresetsTab } from "@/animation/components/keyframe-presets-tab";
 import { OcShapesIcon } from "@/components/icons";
+import { getElementParams } from "@/params/registry";
+import { isLayer3D } from "@/scene3d/layer-params";
+import { CameraTrackerTab } from "@/tracking/components/camera3d/camera-tracker-tab";
+import {
+	LAYER_3D_TAB_ID,
+	arrangeLayerTabs,
+	layer3DTabKeys,
+} from "@/tracking/camera3d/ui/layer-tabs";
+import { Layer3DTab } from "./camera3d/layer-3d-tab";
+import { CameraLayerTab } from "./camera3d/camera-layer-tab";
 
 const TRANSFORM_PARAM_KEYS = [
 	"transform.positionX",
@@ -113,6 +133,99 @@ function buildBlendingTab({
 			/>
 		),
 	};
+}
+
+function buildAnimationTab({
+	element,
+}: {
+	element: VisualElement;
+}): PropertiesTabDef {
+	return {
+		id: "animation",
+		label: "Animation",
+		icon: <HugeiconsIcon icon={Motion01Icon} size={16} />,
+		content: ({ trackId }) => (
+			<AnimationTab element={element} trackId={trackId} />
+		),
+	};
+}
+
+function buildBackgroundTab({
+	element,
+}: {
+	element: TimelineElement;
+}): PropertiesTabDef {
+	return {
+		id: "background",
+		label: "Background",
+		icon: <HugeiconsIcon icon={ColorPickerIcon} size={16} />,
+		content: ({ trackId }) => (
+			<BackgroundTab element={element} trackId={trackId} />
+		),
+	};
+}
+
+function buildKeyframePresetsTab({
+	element,
+}: {
+	element: TimelineElement;
+}): PropertiesTabDef {
+	return {
+		id: "keyframe-presets",
+		label: "Keyframes",
+		icon: <HugeiconsIcon icon={KeyframeIcon} size={16} />,
+		content: ({ trackId }) => (
+			<KeyframePresetsTab targets={[{ trackId, element }]} />
+		),
+	};
+}
+
+/** AE's 3D Camera Tracker on a video clip (Track Camera and its effect controls). */
+function buildCameraTrackerTab({
+	element,
+}: {
+	element: VideoElement;
+}): PropertiesTabDef {
+	return {
+		id: "tracking",
+		label: "Tracking",
+		icon: <HugeiconsIcon icon={FocusPointIcon} size={16} />,
+		content: () => <CameraTrackerTab element={element} />,
+	};
+}
+
+/**
+ * Adds the "3D" tab (AE's 3D layer switch and 3D transform) to a visual
+ * layer's tabs once its `transform3d.*` params are registered; on a 3D layer
+ * the 2D Transform and Masks tabs are dropped.
+ */
+function withLayer3DTab({
+	element,
+	config,
+}: {
+	element: TextElement | ImageElement | StickerElement | GraphicElement;
+	config: ElementPropertiesConfig;
+}): ElementPropertiesConfig {
+	const paramKeys = layer3DTabKeys({
+		elementType: element.type,
+		registeredKeys: new Set(getElementParams({ element }).map((param) => param.key)),
+	});
+	const layer3DTab: PropertiesTabDef | null = paramKeys
+		? {
+				id: LAYER_3D_TAB_ID,
+				label: "3D",
+				icon: <HugeiconsIcon icon={ThreeDViewIcon} size={16} />,
+				content: ({ trackId }) => (
+					<Layer3DTab element={element} trackId={trackId} paramKeys={paramKeys} />
+				),
+			}
+		: null;
+	return arrangeLayerTabs({
+		tabs: config.tabs,
+		defaultTab: config.defaultTab,
+		layer3DTab,
+		is3D: isLayer3D((key) => element.params[key]),
+	});
 }
 
 function buildAudioTab({
@@ -225,14 +338,19 @@ function getTextConfig({
 }: {
 	element: TextElement;
 }): ElementPropertiesConfig {
-	return {
-		defaultTab: "text",
-		tabs: [
-			buildTextTab({ element }),
-			buildTransformTab({ element }),
-			buildBlendingTab({ element }),
-		],
-	};
+	return withLayer3DTab({
+		element,
+		config: {
+			defaultTab: "text",
+			tabs: [
+				buildTextTab({ element }),
+				buildTransformTab({ element }),
+				buildAnimationTab({ element }),
+				buildKeyframePresetsTab({ element }),
+				buildBlendingTab({ element }),
+			],
+		},
+	});
 }
 
 function getVideoConfig({
@@ -247,11 +365,15 @@ function getVideoConfig({
 		defaultTab: "transform",
 		tabs: [
 			buildTransformTab({ element }),
+			buildAnimationTab({ element }),
+			buildKeyframePresetsTab({ element }),
 			...(showAudioTab ? [buildAudioTab({ element })] : []),
 			buildSpeedTab({ element }),
 			buildBlendingTab({ element }),
+			buildBackgroundTab({ element }),
 			buildMasksTab({ element }),
 			buildClipEffectsTab({ element }),
+			buildCameraTrackerTab({ element }),
 		],
 	};
 }
@@ -261,15 +383,21 @@ function getImageConfig({
 }: {
 	element: ImageElement;
 }): ElementPropertiesConfig {
-	return {
-		defaultTab: "transform",
-		tabs: [
-			buildTransformTab({ element }),
-			buildBlendingTab({ element }),
-			buildMasksTab({ element }),
-			buildClipEffectsTab({ element }),
-		],
-	};
+	return withLayer3DTab({
+		element,
+		config: {
+			defaultTab: "transform",
+			tabs: [
+				buildTransformTab({ element }),
+				buildAnimationTab({ element }),
+				buildKeyframePresetsTab({ element }),
+				buildBlendingTab({ element }),
+				buildBackgroundTab({ element }),
+				buildMasksTab({ element }),
+				buildClipEffectsTab({ element }),
+			],
+		},
+	});
 }
 
 function getStickerConfig({
@@ -277,14 +405,20 @@ function getStickerConfig({
 }: {
 	element: StickerElement;
 }): ElementPropertiesConfig {
-	return {
-		defaultTab: "transform",
-		tabs: [
-			buildTransformTab({ element }),
-			buildBlendingTab({ element }),
-			buildClipEffectsTab({ element }),
-		],
-	};
+	return withLayer3DTab({
+		element,
+		config: {
+			defaultTab: "transform",
+			tabs: [
+				buildTransformTab({ element }),
+				buildAnimationTab({ element }),
+				buildKeyframePresetsTab({ element }),
+				buildBlendingTab({ element }),
+				buildBackgroundTab({ element }),
+				buildClipEffectsTab({ element }),
+			],
+		},
+	});
 }
 
 function getGraphicConfig({
@@ -292,16 +426,21 @@ function getGraphicConfig({
 }: {
 	element: GraphicElement;
 }): ElementPropertiesConfig {
-	return {
-		defaultTab: "graphic",
-		tabs: [
-			buildGraphicTab({ element }),
-			buildTransformTab({ element }),
-			buildBlendingTab({ element }),
-			buildMasksTab({ element }),
-			buildClipEffectsTab({ element }),
-		],
-	};
+	return withLayer3DTab({
+		element,
+		config: {
+			defaultTab: "graphic",
+			tabs: [
+				buildGraphicTab({ element }),
+				buildTransformTab({ element }),
+				buildAnimationTab({ element }),
+				buildKeyframePresetsTab({ element }),
+				buildBlendingTab({ element }),
+				buildMasksTab({ element }),
+				buildClipEffectsTab({ element }),
+			],
+		},
+	});
 }
 
 function getAudioConfig({
@@ -311,7 +450,30 @@ function getAudioConfig({
 }): ElementPropertiesConfig {
 	return {
 		defaultTab: "audio",
-		tabs: [buildAudioTab({ element }), buildSpeedTab({ element })],
+		tabs: [
+			buildAudioTab({ element }),
+			buildKeyframePresetsTab({ element }),
+			buildSpeedTab({ element }),
+		],
+	};
+}
+
+/** A camera layer reproduces a camera solve: its tab shows the source clip and the angle of view. */
+function getCameraConfig({
+	element,
+}: {
+	element: CameraElement;
+}): ElementPropertiesConfig {
+	return {
+		defaultTab: "camera",
+		tabs: [
+			{
+				id: "camera",
+				label: "Camera",
+				icon: <HugeiconsIcon icon={Video01Icon} size={16} />,
+				content: ({ trackId }) => <CameraLayerTab element={element} trackId={trackId} />,
+			},
+		],
 	};
 }
 
@@ -350,5 +512,7 @@ export function getPropertiesConfig({
 			return getAudioConfig({ element });
 		case "effect":
 			return getEffectConfig({ element });
+		case "camera":
+			return getCameraConfig({ element });
 	}
 }

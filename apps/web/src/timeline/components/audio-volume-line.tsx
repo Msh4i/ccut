@@ -9,7 +9,10 @@ import {
 } from "@/timeline/audio-display";
 import { VOLUME_DB_MAX, VOLUME_DB_MIN } from "@/timeline/audio-constants";
 import { getElementVolume, hasAnimatedVolume } from "@/timeline/audio-state";
-import type { AudioElement } from "@/timeline/types";
+import { resolveAnimationPathValueAtTime } from "@/animation";
+import { mediaTime } from "@/wasm";
+import { VolumeEnvelopeEditor } from "./volume-envelope-editor";
+import type { AudioCapableElement } from "@/timeline/audio-state";
 import {
 	clamp,
 	formatNumberForDisplay,
@@ -53,7 +56,7 @@ export function AudioVolumeLine({
 	element,
 	trackId,
 }: {
-	element: AudioElement;
+	element: AudioCapableElement;
 	trackId: string;
 }) {
 	const editor = useEditor();
@@ -224,8 +227,39 @@ export function AudioVolumeLine({
 	}, [finishDrag]);
 
 	if (hasAnimatedEnvelope) {
-		return null;
+		return <VolumeEnvelopeEditor element={element} trackId={trackId} />;
 	}
+
+	// Double-click the flat line to start an envelope: the first point keeps
+	// the sound as it is, and can then be dragged.
+	const handleDoubleClick = (event: React.MouseEvent) => {
+		event.preventDefault();
+		event.stopPropagation();
+		const rect = surfaceRef.current?.getBoundingClientRect();
+		if (!rect || rect.width <= 0) return;
+		const fraction = clamp({
+			value: (event.clientX - rect.left) / rect.width,
+			min: 0,
+			max: 1,
+		});
+		const time = Math.round(fraction * element.duration);
+		editor.timeline.upsertKeyframes({
+			keyframes: [
+				{
+					trackId,
+					elementId: element.id,
+					propertyPath: "volume",
+					time: mediaTime({ ticks: time }),
+					value: resolveAnimationPathValueAtTime({
+						animations: element.animations,
+						propertyPath: "volume",
+						localTime: time,
+						fallbackValue: currentVolume,
+					}),
+				},
+			],
+		});
+	};
 
 	return (
 		<div className="pointer-events-none absolute inset-0">
@@ -244,13 +278,14 @@ export function AudioVolumeLine({
 					className="absolute inset-x-0 -translate-y-1/2 touch-none cursor-ns-resize pointer-events-auto"
 					style={{ top: lineTop, height: `${HIT_AREA_HEIGHT_PX}px` }}
 					onClick={handleClick}
+					onDoubleClick={handleDoubleClick}
 					onMouseDown={handleMouseDown}
 					onPointerDown={handlePointerDown}
 					onPointerMove={handlePointerMove}
 					onPointerUp={handlePointerUp}
 					onPointerCancel={handlePointerCancel}
 					onLostPointerCapture={handleLostPointerCapture}
-					title="Drag to adjust clip volume"
+					title="Drag to adjust clip volume. Double-click to add a volume point."
 				/>
 				{isDragging &&
 					tooltipClientPos &&

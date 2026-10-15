@@ -1,15 +1,40 @@
 "use client";
 
+import { videoCache } from "@/services/video-cache/service";
+import { prerollRequestFor, videoClipsOf } from "@/services/video-cache/preroll-scene";
+import { getMatteRevision } from "@/background/matte/matte-registry";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useDeepCompareEffect from "use-deep-compare-effect";
 import { useEditor } from "@/editor/use-editor";
+import { useCustomFontsStore } from "@/fonts/custom-fonts-store";
 import { useRafLoop } from "@/hooks/use-raf-loop";
+import { useCommittedRef } from "@/hooks/use-committed-ref";
 import { useContainerSize } from "@/hooks/use-container-size";
 import { useFullscreen } from "@/hooks/use-fullscreen";
 import { CanvasRenderer } from "@/services/renderer/canvas-renderer";
+import { wasmCompositor } from "@/services/renderer/compositor/wasm-compositor";
+import { onRenderPerfFrameComplete } from "@/diagnostics/render-perf";
+import {
+	isPlaybackHudEnabled,
+	playbackHud,
+} from "@/diagnostics/playback-hud/recorder";
+import { toast } from "sonner";
+import {
+	PREVIEW_RENDER_ERROR_TOAST_ID,
+	previewEffectFailures,
+	previewFrameTolerance,
+	previewGpuErrors,
+	previewRenderErrors,
+	shouldRenderPreview,
+} from "@/preview/render-gate";
+import { drawPreviewScene, hudSinkFor, readPlaybackProbe } from "@/preview/preview-draw";
+import { type PreviewNoticeSink, settlePreviewDraw } from "@/preview/settle-draw";
+import { readGpuErrorStats } from "@/services/renderer/gpu-errors";
+import { previewSourceDensity } from "@/services/renderer/source-scale";
+import { previewRenderScale } from "@/services/renderer/compositor/scale-frame";
+import { playbackLevers } from "@/services/playback-levers/store";
 import { TICKS_PER_SECOND } from "@/wasm";
 import type { RootNode } from "@/services/renderer/nodes/root-node";
-import { buildScene } from "@/services/renderer/scene-builder";
 import { PreviewOverlayLayer } from "./overlay-layer";
 import { PreviewInteractionOverlay } from "./preview-interaction-overlay";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
@@ -23,6 +48,20 @@ import {
 	PreviewViewportProvider,
 	usePreviewViewportState,
 } from "./preview-viewport";
+
+/** The preview's notices: one toast with a fixed id (a new one replaces it) and one console line. */
+const previewNotices: PreviewNoticeSink = {
+	show: ({ level, title, description, duration }) => {
+		const show = level === "error" ? toast.error : toast.warning;
+		show(title, { id: PREVIEW_RENDER_ERROR_TOAST_ID, description, duration });
+	},
+	dismiss: () => {
+		toast.dismiss(PREVIEW_RENDER_ERROR_TOAST_ID);
+	},
+	logError: ({ label, error }) => {
+		console.error(label, error);
+	},
+};
 
 function usePreviewSize() {
 	const canvasSize = useEditor(
@@ -101,22 +140,32 @@ function RenderTreeController() {
 	const activeProject = useEditor((e) => e.project.getActive());
 
 	const { width, height } = usePreviewSize();
+	// Importing or deleting a font changes how text renders without touching
+	// the tracks, so the scene must be rebuilt for the preview to follow.
+	const customFontsVersion = useCustomFontsStore((state) => state.version);
 
 	useDeepCompareEffect(() => {
 		if (!activeProject) return;
 
 		const duration = editor.timeline.getTotalDuration();
-		const renderTree = buildScene({
-			tracks,
-			mediaAssets,
-			duration,
-			canvasSize: { width, height },
-			background: activeProject.settings.background,
-			isPreview: true,
+		editor.renderer.setPreviewScene({
+			params: {
+				tracks,
+				mediaAssets,
+				duration,
+				canvasSize: { width, height },
+				background: activeProject.settings.background,
+				isPreview: true,
+			},
 		});
-
-		editor.renderer.setRenderTree({ renderTree });
-	}, [tracks, mediaAssets, activeProject?.settings.background, width, height]);
+	}, [
+		tracks,
+		mediaAssets,
+		activeProject?.settings.background,
+		width,
+		height,
+		customFontsVersion,
+	]);
 
 	return null;
 }
@@ -141,7 +190,18 @@ function PreviewCanvas({
 	const viewportRef = useRef<HTMLDivElement>(null);
 	const lastFrameRef = useRef(-1);
 	const lastSceneRef = useRef<RootNode | null>(null);
+	const matteRevisionRef = useRef(getMatteRevision());
+	// Compositor draw serial right after the preview's own last draw: the
+	// exporter and the snapshot renderers draw into the same canvas.
+	const lastOwnSerialRef = useRef(-1);
+	// Video frame tolerance of the preview's last draw (see `shouldRenderPreview`).
+	const lastMaxStaleSecondsRef = useRef(0);
+	// Source density of the preview's last draw (see `previewSourceDensity`).
+	const lastSourceDensityRef = useRef<number | null>(null);
+	// Compositor scale of the preview's last draw (see `previewRenderScale`).
+	const lastRenderScaleRef = useRef(1);
 	const renderingRef = useRef(false);
+	const lastPrerollMsRef = useRef(0);
 	const { width: nativeWidth, height: nativeHeight } = usePreviewSize();
 	const viewportSize = useContainerSize({ containerRef: viewportRef });
 	const editor = useEditor();
@@ -155,6 +215,9 @@ function PreviewCanvas({
 		viewportWidth: viewportSize.width,
 	});
 	const { canPan, panByScreenDelta, scaleZoom } = viewport;
+	// The scene's width on screen (CSS px), read by the draw loop without
+	// recreating it on every zoom step.
+	const sceneCssWidthRef = useCommittedRef(viewport.sceneWidth);
 
 	const renderer = useMemo(() => {
 		return new CanvasRenderer({
@@ -185,6 +248,21 @@ function PreviewCanvas({
 	const render = useCallback(() => {
 		if (!renderTree || renderingRef.current) return;
 
+		// A cutout was added or removed: draw the paused frame again.
+		const matteRevision = getMatteRevision();
+		if (matteRevisionRef.current !== matteRevision) {
+			matteRevisionRef.current = matteRevision;
+			lastSceneRef.current = null;
+		}
+
+		const isPlaying = editor.playback.getIsPlaying();
+		const hudEnabled = isPlaybackHudEnabled();
+		if (hudEnabled) {
+			playbackHud.tick({ playing: isPlaying, nowMs: performance.now() });
+		} else {
+			playbackHud.deactivate();
+		}
+
 		const renderTime = Math.min(
 			editor.playback.getCurrentTime(),
 			editor.timeline.getLastFrameTime(),
@@ -193,10 +271,59 @@ function PreviewCanvas({
 			(TICKS_PER_SECOND * renderer.fps.denominator) / renderer.fps.numerator,
 		);
 		const frame = Math.floor(renderTime / ticksPerFrame);
+		// While playing, a video frame the decoder has not delivered yet may be
+		// replaced by a slightly older one instead of stalling the draw; paused
+		// seeks (and the exporter, which never comes through here) stay exact.
+		const isScrubbing = editor.playback.getIsScrubbing();
+		// The next clips' decoders start before the playhead gets there (a cut would show late otherwise);
+		// scrubbing and exporting release what was opened ahead. Every 100 ms is often enough.
+		const nowMs = performance.now();
+		if (nowMs - lastPrerollMsRef.current >= 100) {
+			lastPrerollMsRef.current = nowMs;
+			if (!isScrubbing && !editor.project.getExportState().isExporting) {
+				const request = prerollRequestFor({
+					clips: videoClipsOf({ root: renderTree }),
+					timeSeconds: editor.playback.getCurrentTime() / TICKS_PER_SECOND,
+					playing: isPlaying,
+				});
+				void videoCache.prefetchClips({ ...request, allowWorker: true });
+			} else {
+				void videoCache.prefetchClips({ clips: [], allowWorker: true });
+			}
+		}
+		const maxStaleSeconds = previewFrameTolerance({ isPlaying, isScrubbing });
+		// While playing or scrubbing, video frames are drawn at about their size
+		// on screen; paused (null) at full resolution, as an export would.
+		const sourceDensity = previewSourceDensity({
+			isPlaying,
+			isScrubbing,
+			sceneCssWidth: sceneCssWidthRef.current,
+			canvasWidth: renderer.width,
+			devicePixelRatio: window.devicePixelRatio,
+		});
+		// The display-size lever: composite at about the size on screen while
+		// playing or scrubbing; paused (density null) it is 1, full size.
+		const renderScale = previewRenderScale({
+			displayResolution: playbackLevers().displayResolution,
+			sourceDensity,
+		});
 
 		if (
-			frame === lastFrameRef.current &&
-			renderTree === lastSceneRef.current
+			!shouldRenderPreview({
+				isExporting: editor.project.getExportState().isExporting,
+				frame,
+				lastFrame: lastFrameRef.current,
+				scene: renderTree,
+				lastScene: lastSceneRef.current,
+				compositorSerial: wasmCompositor.getDrawSerial(),
+				lastOwnSerial: lastOwnSerialRef.current,
+				maxStaleSeconds,
+				lastMaxStaleSeconds: lastMaxStaleSecondsRef.current,
+				sourceDensity,
+				lastSourceDensity: lastSourceDensityRef.current,
+				renderScale,
+				lastRenderScale: lastRenderScaleRef.current,
+			})
 		) {
 			return;
 		}
@@ -204,12 +331,47 @@ function PreviewCanvas({
 		renderingRef.current = true;
 		lastSceneRef.current = renderTree;
 		lastFrameRef.current = frame;
-		renderer
-			.render({ node: renderTree, time: renderTime })
-			.then(() => {
-				renderingRef.current = false;
+		lastMaxStaleSecondsRef.current = maxStaleSeconds;
+		lastSourceDensityRef.current = sourceDensity;
+		lastRenderScaleRef.current = renderScale;
+		const before = hudEnabled ? readPlaybackProbe() : null;
+		// Not again with the effects that failed for this scene (until an edit).
+		const effectsFirst = previewEffectFailures.tryEffects(renderTree);
+		drawPreviewScene({
+			renderer,
+			scene: renderTree,
+			time: renderTime,
+			preview: { sourceDensity, renderScale },
+			maxStaleSeconds,
+			effectsFirst,
+			isExporting: () => editor.project.getExportState().isExporting,
+		}).then((result) => {
+			lastOwnSerialRef.current = result.serial;
+			renderingRef.current = false;
+			// window.__renderPerf summaries count preview draws as frames too.
+			onRenderPerfFrameComplete();
+			settlePreviewDraw({
+				result,
+				scene: renderTree,
+				effectsFirst,
+				nowMs: performance.now(),
+				projectId: editor.project.getActive()?.metadata.id,
+				gpuStats: readGpuErrorStats(),
+				memory: previewEffectFailures,
+				reporter: previewRenderErrors,
+				gpuWatcher: previewGpuErrors,
+				notices: previewNotices,
+				hud: before ? hudSinkFor({ before, renderer }) : null,
 			});
-	}, [renderer, renderTree, editor.playback, editor.timeline]);
+		});
+	}, [
+		renderer,
+		renderTree,
+		editor.playback,
+		editor.timeline,
+		editor.project,
+		sceneCssWidthRef,
+	]);
 
 	useRafLoop(render);
 

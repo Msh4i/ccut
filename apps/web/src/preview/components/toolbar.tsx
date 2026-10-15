@@ -1,6 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useSyncExternalStore } from "react";
+import { Spinner } from "@/components/ui/spinner";
+import { decoderPrewarmer } from "@/services/video-cache/decoder-prewarm";
 import { useEditor } from "@/editor/use-editor";
 import { formatTimecode } from "opencut-wasm";
 import { invokeAction } from "@/actions";
@@ -133,14 +135,25 @@ function ZoomSelect() {
 
 function PlayPauseButton() {
 	const isPlaying = useEditor((e) => e.playback.getIsPlaying());
+	const isStarting = useEditor((e) => e.playback.getIsStarting());
+	const isWarming = useSyncExternalStore(
+		(listener) => decoderPrewarmer.subscribe(listener),
+		() => decoderPrewarmer.isWarming(),
+		() => false,
+	);
 
 	return (
 		<Button
 			variant="text"
 			size="icon"
+			title={isStarting || isWarming ? "Preparing video..." : undefined}
 			onClick={() => invokeAction("toggle-play")}
 		>
-			<HugeiconsIcon icon={isPlaying ? PauseIcon : PlayIcon} />
+			{isStarting || isWarming ? (
+				<Spinner className="size-4" />
+			) : (
+				<HugeiconsIcon icon={isPlaying ? PauseIcon : PlayIcon} />
+			)}
 		</Button>
 	);
 }

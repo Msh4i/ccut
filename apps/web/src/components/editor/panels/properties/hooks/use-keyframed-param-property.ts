@@ -1,6 +1,13 @@
 "use client";
 
+import { toast } from "sonner";
+import { getEditableScalarChannels } from "@/animation/graph-channels";
 import { useEditor } from "@/editor/use-editor";
+import {
+	findCurveKeyframesAtTime,
+	toSegmentStartKeyframes,
+} from "@/timeline/keyframe-curve-targets";
+import { useKeyframeCurveMenuStore } from "@/timeline/keyframe-curve-menu-store";
 import {
 	buildGraphicParamPath,
 	getKeyframeAtTime,
@@ -26,6 +33,9 @@ export interface KeyframedParamPropertyResult {
 	onPreview: (value: number | string | boolean) => void;
 	onCommit: () => void;
 	toggleKeyframe: () => void;
+	/** Right click on the diamond: the curve menu for this property's keyframe at the playhead. */
+	/** Undefined for a param whose keys have no curve (colour, on/off, text). */
+	openCurveMenu?: (event: React.MouseEvent) => void;
 }
 
 export function useKeyframedParamProperty({
@@ -142,7 +152,40 @@ export function useKeyframedParamProperty({
 		});
 	};
 
+	const hasCurveChannels =
+		(getEditableScalarChannels({ animations, propertyPath: resolvedPropertyPath })
+			?.channels.length ?? 0) > 0;
+	const openCurveMenu = (event: React.MouseEvent) => {
+		event.preventDefault();
+		const keyframes = isPlayheadWithinElementRange
+			? toSegmentStartKeyframes({
+					animations,
+					keyframes: findCurveKeyframesAtTime({
+						trackId,
+						elementId,
+						animations,
+						paths: [resolvedPropertyPath],
+						localTime,
+					}),
+				})
+			: [];
+		if (keyframes.length === 0) {
+			toast.info(
+				"No keyframe here. Add two keyframes, then right-click to pick the curve between them.",
+			);
+			return;
+		}
+		useKeyframeCurveMenuStore.getState().open({
+			x: event.clientX,
+			y: event.clientY,
+			trackId,
+			elementId,
+			keyframes,
+		});
+	};
+
 	return {
+		openCurveMenu: hasCurveChannels ? openCurveMenu : undefined,
 		hasAnimatedKeyframes,
 		isKeyframedAtTime,
 		keyframeIdAtTime,

@@ -964,6 +964,7 @@ dependencies = [
  "gpu",
  "masks",
  "serde",
+ "serde_json",
  "thiserror 2.0.18",
 ]
 
@@ -1455,6 +1456,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "gpu",
+ "naga 29.0.1",
  "thiserror 2.0.18",
  "wgpu",
 ]

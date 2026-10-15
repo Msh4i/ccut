@@ -3,23 +3,11 @@ import { getMediaTypeFromFile } from "@/media/media-utils";
 import { formatStorageBytes } from "@/services/storage/quota";
 import { storageService } from "@/services/storage/service";
 import type { MediaAsset } from "@/media/types";
+import { videoImportNotices } from "./import-notices";
 import { readVideoFile } from "./mediabunny";
-import type { VideoFileData } from "./mediabunny";
 import { renderThumbnailDataUrl } from "./thumbnail";
 
 export interface ProcessedMediaAsset extends Omit<MediaAsset, "id"> {}
-
-const getUnsupportedVideoDescription = ({
-	codec,
-}: {
-	codec: VideoFileData["codec"];
-}): string => {
-	const codecLabel = codec ? codec.toUpperCase() : "this video codec";
-
-	return codec === "hevc"
-		? `${codecLabel} cannot be decoded in this browser, so this clip may not preview correctly. Convert it to H.264 MP4 or try importing it in Safari.`
-		: `${codecLabel} cannot be decoded in this browser, so this clip may not preview correctly. Convert it to H.264 MP4 and reimport it.`;
-};
 
 const getStorageLimitDescription = ({
 	fileSize,
@@ -143,12 +131,12 @@ export async function processMediaAssets({
 					hasAudio = videoData.hasAudio;
 					thumbnailUrl = videoData.thumbnailUrl ?? undefined;
 
-					if (!videoData.canDecode) {
-						toast.error(`Can't preview ${file.name}`, {
-							description: getUnsupportedVideoDescription({
-								codec: videoData.codec,
-							}),
-						});
+					for (const notice of videoImportNotices({
+						fileName: file.name,
+						video: videoData,
+					})) {
+						const show = notice.level === "error" ? toast.error : toast.warning;
+						show(notice.title, { description: notice.description });
 					}
 				} catch (error) {
 					const message =

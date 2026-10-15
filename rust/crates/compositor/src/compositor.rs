@@ -47,8 +47,11 @@ pub enum CompositorError {
     Gpu(#[from] gpu::GpuError),
 }
 
+/// Mirrors `LayerUniforms` in `shaders/layer.wgsl`. WebGL requires uniform
+/// buffer sizes to be multiples of 16 bytes; the three inverse-homography rows
+/// are vec4s that start on a 16-byte boundary (offset 48), 96 bytes in all.
 #[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
+#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 struct LayerUniformBuffer {
     resolution: [f32; 2],
     center: [f32; 2],
@@ -57,7 +60,71 @@ struct LayerUniformBuffer {
     opacity: f32,
     flip_x: f32,
     flip_y: f32,
-    _padding: [f32; 2], // WebGL requires uniform buffer sizes to be multiples of 16 bytes (40 → 48)
+    /// 1.0 when the layer is placed by `inverse_homography` (a 3D layer).
+    homography_enabled: f32,
+    _padding: f32,
+    /// Rows of the inverse homography (canvas pixels -> layer UV), w unused.
+    inverse_homography: [[f32; 4]; 3],
+}
+
+/// The inverse of a layer homography (UV -> canvas pixels, row-major),
+/// computed in f64 and scaled by a positive factor so that its largest entry
+/// is 1 (the sign is kept: `q.z > 0` still means "in front of the camera").
+/// `None` when the homography is singular or not finite.
+fn layer_homography_inverse(homography: &[f32; 9]) -> Option<[f64; 9]> {
+    let [a, b, c, d, e, f, g, h, i] = homography.map(f64::from);
+    // Adjugate (transposed cofactors), row-major.
+    let adjugate = [
+        e * i - f * h,
+        c * h - b * i,
+        b * f - c * e,
+        f * g - d * i,
+        a * i - c * g,
+        c * d - a * f,
+        d * h - e * g,
+        b * g - a * h,
+        a * e - b * d,
+    ];
+    let determinant = a * adjugate[0] + b * adjugate[3] + c * adjugate[6];
+    if !determinant.is_finite() || determinant == 0.0 {
+        return None;
+    }
+    let inverse = adjugate.map(|value| value / determinant);
+    let largest = inverse.iter().fold(0.0_f64, |m, value| m.max(value.abs()));
+    if !largest.is_finite() || largest == 0.0 {
+        return None;
+    }
+    Some(inverse.map(|value| value / largest))
+}
+
+fn layer_uniforms(layer: &LayerDescriptor, width: u32, height: u32) -> LayerUniformBuffer {
+    let (homography_enabled, inverse_homography) = match &layer.transform.homography {
+        None => (0.0, [[0.0; 4]; 3]),
+        // A singular map keeps the flag with zero rows: q = 0, q.z <= 0, nothing is drawn.
+        Some(homography) => match layer_homography_inverse(homography) {
+            None => (1.0, [[0.0; 4]; 3]),
+            Some(m) => (
+                1.0,
+                [
+                    [m[0] as f32, m[1] as f32, m[2] as f32, 0.0],
+                    [m[3] as f32, m[4] as f32, m[5] as f32, 0.0],
+                    [m[6] as f32, m[7] as f32, m[8] as f32, 0.0],
+                ],
+            ),
+        },
+    };
+    LayerUniformBuffer {
+        resolution: [width as f32, height as f32],
+        center: [layer.transform.center_x, layer.transform.center_y],
+        size: [layer.transform.width, layer.transform.height],
+        rotation_radians: layer.transform.rotation_degrees.to_radians(),
+        opacity: layer.opacity,
+        flip_x: if layer.transform.flip_x { 1.0 } else { 0.0 },
+        flip_y: if layer.transform.flip_y { 1.0 } else { 0.0 },
+        homography_enabled,
+        _padding: 0.0,
+        inverse_homography,
+    }
 }
 
 #[repr(C)]
@@ -288,6 +355,26 @@ impl Compositor {
         self.textures.remove(id);
     }
 
+    /// Size of the texture stored under `id` (the input of `plan_upload`).
+    pub fn texture_extent(&self, id: &str) -> Option<(u32, u32)> {
+        self.textures.extent(id)
+    }
+
+    /// A handle to the texture stored under `id`, to copy pixels into it.
+    pub fn stored_texture(&self, id: &str) -> Option<wgpu::Texture> {
+        self.textures.get(id).map(|stored| stored.texture().clone())
+    }
+
+    /// Pixels were copied into the texture of `id`: a new generation.
+    pub fn mark_texture_updated(&mut self, id: &str) -> bool {
+        self.textures.mark_updated(id)
+    }
+
+    /// The generation of the texture of `id` (changes at every write to it).
+    pub fn texture_generation(&self, id: &str) -> Option<u64> {
+        self.textures.get(id).map(|stored| stored.generation())
+    }
+
     /// Composites all frame items into a texture and returns it.
     /// Used on backends that cannot surface-render to an arbitrary canvas (e.g. WebGL).
     pub fn render_frame_to_texture(
@@ -296,6 +383,7 @@ impl Compositor {
         frame: &FrameDescriptor,
     ) -> Result<wgpu::Texture, CompositorError> {
         self.texture_pool.recycle_frame();
+        self.effects.recycle_frame();
         let mut encoder =
             context
                 .device()
@@ -348,6 +436,7 @@ impl Compositor {
     ) -> Result<(), CompositorError> {
         let frame = options.frame;
         self.texture_pool.recycle_frame();
+        self.effects.recycle_frame();
         let surface_texture = context.acquire_surface_texture(options.surface)?;
         let surface_view = surface_texture
             .texture
@@ -430,7 +519,10 @@ impl Compositor {
             layer,
         );
 
-        if !layer.effect_pass_groups.is_empty() {
+        if usable_effect_groups(&layer.effect_pass_groups)
+            .next()
+            .is_some()
+        {
             current = self.apply_effect_groups(
                 context,
                 encoder,
@@ -491,8 +583,12 @@ impl Compositor {
         height: u32,
         effect_pass_groups: &[Vec<EffectPassDescriptor>],
     ) -> Result<wgpu::Texture, CompositorError> {
+        let mut groups = usable_effect_groups(effect_pass_groups).peekable();
+        if groups.peek().is_none() {
+            return Ok(source.clone());
+        }
         let mut current = self.copy_texture(context, encoder, source, width, height);
-        for group in effect_pass_groups {
+        for group in groups {
             let passes = map_effect_passes(group);
             current = self.effects.apply_with_encoder(
                 context,
@@ -594,16 +690,7 @@ impl Compositor {
                 .device()
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("compositor-layer-uniform-buffer"),
-                    contents: bytemuck::bytes_of(&LayerUniformBuffer {
-                        resolution: [width as f32, height as f32],
-                        center: [layer.transform.center_x, layer.transform.center_y],
-                        size: [layer.transform.width, layer.transform.height],
-                        rotation_radians: layer.transform.rotation_degrees.to_radians(),
-                        opacity: layer.opacity,
-                        flip_x: if layer.transform.flip_x { 1.0 } else { 0.0 },
-                        flip_y: if layer.transform.flip_y { 1.0 } else { 0.0 },
-                        _padding: [0.0; 2],
-                    }),
+                    contents: bytemuck::bytes_of(&layer_uniforms(layer, width, height)),
                     usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 });
         let uniform_bind_group = context
@@ -849,6 +936,15 @@ impl Compositor {
     }
 }
 
+/// The effect pass groups that are applied: an empty group (an effect with
+/// nothing to do, e.g. a blur of 0 px) is skipped as identity. Handed to the
+/// effect pipeline it is `MissingEffectPasses`, which failed the whole frame.
+fn usable_effect_groups(
+    effect_pass_groups: &[Vec<EffectPassDescriptor>],
+) -> impl Iterator<Item = &Vec<EffectPassDescriptor>> {
+    effect_pass_groups.iter().filter(|group| !group.is_empty())
+}
+
 fn map_effect_passes(passes: &[EffectPassDescriptor]) -> Vec<EffectPass> {
     passes
         .iter()
@@ -867,4 +963,323 @@ fn map_effect_passes(passes: &[EffectPassDescriptor]) -> Vec<EffectPass> {
                 .collect(),
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::{
+        LayerUniformBuffer, layer_homography_inverse, layer_uniforms, usable_effect_groups,
+    };
+    use crate::{
+        BlendMode,
+        frame::{EffectPassDescriptor, LayerDescriptor, QuadTransformDescriptor},
+    };
+
+    /// A perspective map of the UV square: w = 0.4 u + 0.3 v + 1 > 0 on it.
+    const PERSPECTIVE: [f32; 9] = [700.0, 150.0, 200.0, -80.0, 500.0, 150.0, 0.4, 0.3, 1.0];
+
+    fn apply(m: &[f64; 9], p: [f64; 3]) -> [f64; 3] {
+        [
+            m[0] * p[0] + m[1] * p[1] + m[2] * p[2],
+            m[3] * p[0] + m[4] * p[1] + m[5] * p[2],
+            m[6] * p[0] + m[7] * p[1] + m[8] * p[2],
+        ]
+    }
+
+    fn widen(m: &[f32; 9]) -> [f64; 9] {
+        m.map(f64::from)
+    }
+
+    fn uv_samples() -> Vec<[f64; 2]> {
+        let mut samples = Vec::new();
+        for i in 0..=4 {
+            for j in 0..=4 {
+                samples.push([i as f64 / 4.0, j as f64 / 4.0]);
+            }
+        }
+        samples.push([0.123, 0.987]);
+        samples.push([0.5, 0.25]);
+        samples
+    }
+
+    /// Canvas pixel of a UV point through `h`, and its w.
+    fn forward(h: &[f32; 9], uv: [f64; 2]) -> ([f64; 2], f64) {
+        let p = apply(&widen(h), [uv[0], uv[1], 1.0]);
+        ([p[0] / p[2], p[1] / p[2]], p[2])
+    }
+
+    fn layer(homography: Option<[f32; 9]>) -> LayerDescriptor {
+        LayerDescriptor {
+            texture_id: "layer".to_string(),
+            transform: QuadTransformDescriptor {
+                center_x: 412.5,
+                center_y: 233.25,
+                width: 301.0,
+                height: 177.5,
+                rotation_degrees: 33.0,
+                flip_x: true,
+                flip_y: false,
+                homography,
+            },
+            opacity: 0.75,
+            blend_mode: BlendMode::Normal,
+            effect_pass_groups: Vec::new(),
+            mask: None,
+        }
+    }
+
+    #[test]
+    fn uniform_layout_keeps_16_byte_rows() {
+        assert_eq!(std::mem::size_of::<LayerUniformBuffer>(), 96);
+        assert_eq!(std::mem::size_of::<LayerUniformBuffer>() % 16, 0);
+        assert_eq!(
+            std::mem::offset_of!(LayerUniformBuffer, homography_enabled),
+            40
+        );
+        assert_eq!(
+            std::mem::offset_of!(LayerUniformBuffer, inverse_homography),
+            48
+        );
+    }
+
+    #[test]
+    fn a_2d_layer_fills_the_first_40_bytes_exactly_as_before() {
+        let uniforms = layer_uniforms(&layer(None), 1920, 1080);
+        // The 2D fields of the old 48-byte buffer, in order.
+        let old: [f32; 10] = [
+            1920.0,
+            1080.0,
+            412.5,
+            233.25,
+            301.0,
+            177.5,
+            33.0_f32.to_radians(),
+            0.75,
+            1.0,
+            0.0,
+        ];
+        let bytes = bytemuck::bytes_of(&uniforms);
+        assert_eq!(&bytes[..40], bytemuck::bytes_of(&old));
+        assert_eq!(uniforms.homography_enabled, 0.0);
+        assert_eq!(uniforms.inverse_homography, [[0.0; 4]; 3]);
+        assert!(bytes[40..].iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn a_homography_layer_carries_the_normalised_inverse() {
+        let uniforms = layer_uniforms(&layer(Some(PERSPECTIVE)), 1920, 1080);
+        let inverse = layer_homography_inverse(&PERSPECTIVE).expect("invertible");
+        assert_eq!(uniforms.homography_enabled, 1.0);
+        for row in 0..3 {
+            for column in 0..3 {
+                assert_eq!(
+                    uniforms.inverse_homography[row][column],
+                    inverse[row * 3 + column] as f32
+                );
+            }
+            assert_eq!(uniforms.inverse_homography[row][3], 0.0);
+        }
+        assert_eq!(uniforms.opacity, 0.75);
+    }
+
+    #[test]
+    fn a_singular_homography_layer_draws_nothing() {
+        let uniforms = layer_uniforms(&layer(Some([0.0; 9])), 1920, 1080);
+        assert_eq!(uniforms.homography_enabled, 1.0);
+        // q = 0 for every pixel: q.z <= 0 is transparent in the shader.
+        assert_eq!(uniforms.inverse_homography, [[0.0; 4]; 3]);
+    }
+
+    #[test]
+    fn the_inverse_maps_canvas_pixels_back_to_uv() {
+        let affine: [f32; 9] = [640.0, 0.0, 100.0, 0.0, 360.0, 50.0, 0.0, 0.0, 1.0];
+        for h in [affine, PERSPECTIVE] {
+            let inverse = layer_homography_inverse(&h).expect("invertible");
+            for uv in uv_samples() {
+                let (pixel, w) = forward(&h, uv);
+                assert!(w > 0.0);
+                let q = apply(&inverse, [pixel[0], pixel[1], 1.0]);
+                assert!(q[2] > 0.0, "in front of the camera: q.z > 0");
+                assert!((q[0] / q[2] - uv[0]).abs() < 1e-9, "u of {uv:?}");
+                assert!((q[1] / q[2] - uv[1]).abs() < 1e-9, "v of {uv:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_inverse_is_normalised_to_a_largest_entry_of_one() {
+        let inverse = layer_homography_inverse(&PERSPECTIVE).expect("invertible");
+        let largest = inverse.iter().fold(0.0_f64, |m, v| m.max(v.abs()));
+        assert_eq!(largest, 1.0);
+    }
+
+    #[test]
+    fn a_positive_rescaling_of_h_gives_the_same_inverse() {
+        let base = layer_homography_inverse(&PERSPECTIVE).expect("invertible");
+        for factor in [1e-3_f32, 7.5, 1e4] {
+            let scaled = PERSPECTIVE.map(|v| v * factor);
+            let inverse = layer_homography_inverse(&scaled).expect("invertible");
+            for (a, b) in base.iter().zip(inverse.iter()) {
+                assert!((a - b).abs() < 1e-6, "factor {factor}: {a} vs {b}");
+            }
+        }
+    }
+
+    #[test]
+    fn pixels_whose_layer_point_is_behind_the_camera_get_a_negative_q_z() {
+        // w = u - 0.5: the half u < 0.5 of the layer is behind the camera.
+        let h: [f32; 9] = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0, -0.5];
+        let inverse = layer_homography_inverse(&h).expect("invertible");
+        for (uv, in_front) in [
+            ([0.25, 0.5], false),
+            ([0.75, 0.5], true),
+            ([0.1, 0.9], false),
+        ] {
+            let (pixel, w) = forward(&h, uv);
+            assert_eq!(w > 0.0, in_front);
+            let q = apply(&inverse, [pixel[0], pixel[1], 1.0]);
+            assert_eq!(q[2] > 0.0, in_front, "uv {uv:?}");
+            assert!((q[0] / q[2] - uv[0]).abs() < 1e-9);
+        }
+    }
+
+    /// The WGSL uniform struct must match `LayerUniformBuffer` byte for byte,
+    /// and the shader must still compile for the WebGL2 fallback (GLSL ES 3.00).
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn layer_shader_validates_matches_the_uniform_layout_and_compiles_for_webgl2() {
+        use gpu::wgpu::naga;
+
+        let module =
+            naga::front::wgsl::parse_str(super::LAYER_SHADER_SOURCE).expect("layer.wgsl parses");
+        let info = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::default(),
+        )
+        .validate(&module)
+        .expect("layer.wgsl validates");
+
+        let (members, span) = module
+            .types
+            .iter()
+            .find_map(|(_, ty)| match (&ty.name, &ty.inner) {
+                (Some(name), naga::TypeInner::Struct { members, span })
+                    if name == "LayerUniforms" =>
+                {
+                    Some((members.clone(), *span))
+                }
+                _ => None,
+            })
+            .expect("LayerUniforms struct");
+        assert_eq!(span as usize, std::mem::size_of::<LayerUniformBuffer>());
+        let offset = |name: &str| {
+            members
+                .iter()
+                .find(|member| member.name.as_deref() == Some(name))
+                .map(|member| member.offset as usize)
+                .unwrap_or_else(|| panic!("member {name}"))
+        };
+        assert_eq!(
+            offset("resolution"),
+            std::mem::offset_of!(LayerUniformBuffer, resolution)
+        );
+        assert_eq!(
+            offset("center"),
+            std::mem::offset_of!(LayerUniformBuffer, center)
+        );
+        assert_eq!(
+            offset("size"),
+            std::mem::offset_of!(LayerUniformBuffer, size)
+        );
+        assert_eq!(
+            offset("rotation_radians"),
+            std::mem::offset_of!(LayerUniformBuffer, rotation_radians)
+        );
+        assert_eq!(
+            offset("opacity"),
+            std::mem::offset_of!(LayerUniformBuffer, opacity)
+        );
+        assert_eq!(
+            offset("flip_x"),
+            std::mem::offset_of!(LayerUniformBuffer, flip_x)
+        );
+        assert_eq!(
+            offset("flip_y"),
+            std::mem::offset_of!(LayerUniformBuffer, flip_y)
+        );
+        assert_eq!(
+            offset("homography_enabled"),
+            std::mem::offset_of!(LayerUniformBuffer, homography_enabled)
+        );
+        let rows = std::mem::offset_of!(LayerUniformBuffer, inverse_homography);
+        assert_eq!(offset("inverse_homography_row0"), rows);
+        assert_eq!(offset("inverse_homography_row1"), rows + 16);
+        assert_eq!(offset("inverse_homography_row2"), rows + 32);
+
+        let options = naga::back::glsl::Options {
+            version: naga::back::glsl::Version::Embedded {
+                version: 300,
+                is_webgl: true,
+            },
+            ..naga::back::glsl::Options::default()
+        };
+        let pipeline_options = naga::back::glsl::PipelineOptions {
+            shader_stage: naga::ShaderStage::Fragment,
+            entry_point: "fragment_main".to_string(),
+            multiview: None,
+        };
+        let mut glsl = String::new();
+        naga::back::glsl::Writer::new(
+            &mut glsl,
+            &module,
+            &info,
+            &options,
+            &pipeline_options,
+            naga::proc::BoundsCheckPolicies::default(),
+        )
+        .expect("GLSL ES 3.00 writer")
+        .write()
+        .expect("GLSL ES 3.00 output");
+        assert!(glsl.contains("inverse_homography_row2"));
+    }
+
+    fn blur_pass() -> EffectPassDescriptor {
+        EffectPassDescriptor {
+            shader: "gaussian-blur".to_string(),
+            uniforms: HashMap::new(),
+        }
+    }
+
+    /// An empty group used to reach `EffectPipeline::apply_with_encoder`, which
+    /// returns `MissingEffectPasses`, and the whole frame failed with it.
+    #[test]
+    fn empty_effect_pass_groups_are_skipped_not_applied() {
+        let groups = vec![
+            vec![],
+            vec![blur_pass(), blur_pass()],
+            vec![],
+            vec![blur_pass()],
+        ];
+        let applied: Vec<usize> = usable_effect_groups(&groups).map(Vec::len).collect();
+        assert_eq!(applied, vec![2, 1]);
+
+        let only_empty: Vec<Vec<EffectPassDescriptor>> = vec![vec![], vec![]];
+        assert_eq!(usable_effect_groups(&only_empty).count(), 0);
+        assert_eq!(usable_effect_groups(&[]).count(), 0);
+    }
+
+    #[test]
+    fn singular_or_non_finite_homographies_have_no_inverse() {
+        assert_eq!(layer_homography_inverse(&[0.0; 9]), None);
+        // Rank 2: the third row is the sum of the first two (an edge-on layer).
+        let rank_two: [f32; 9] = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 5.0, 7.0, 9.0];
+        assert_eq!(layer_homography_inverse(&rank_two), None);
+        let mut not_finite = PERSPECTIVE;
+        not_finite[4] = f32::NAN;
+        assert_eq!(layer_homography_inverse(&not_finite), None);
+        not_finite[4] = f32::INFINITY;
+        assert_eq!(layer_homography_inverse(&not_finite), None);
+    }
 }

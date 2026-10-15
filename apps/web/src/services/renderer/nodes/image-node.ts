@@ -7,6 +7,8 @@ import {
 export interface ImageNodeParams extends VisualNodeParams {
 	url: string;
 	maxSourceSize?: number;
+	/** Timeline element id: looks up the clip's cutout matte. */
+	elementId?: string;
 }
 
 export interface CachedImageSource {

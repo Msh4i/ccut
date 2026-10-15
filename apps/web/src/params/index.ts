@@ -1,5 +1,6 @@
 import { converter, formatHex, formatHex8, parse } from "culori";
 import { clamp, snapToStep } from "@/utils/math";
+import type { NumberSliderSpec } from "@/params/slider";
 
 export type ParamValue = number | string | boolean;
 export type ParamValues = Record<string, ParamValue>;
@@ -194,6 +195,10 @@ export interface NumberParamDefinition<TKey extends string = string>
 	unit?: "percent";
 	/** Short label shown as the scrub handle icon in the number field (e.g. "W", "R"). */
 	shortLabel?: string;
+	/** Draggable bar range in display space. Defaults to min..max when max is set; `false` opts out. */
+	slider?: NumberSliderSpec | false;
+	/** Unit a screen reader speaks after the value (e.g. "dB", "percent"). */
+	unitLabel?: string;
 }
 
 export interface BooleanParamDefinition<TKey extends string = string>
@@ -303,6 +308,22 @@ export function getParamNumericRange({
 		min: param.min,
 		max: param.max,
 		step: param.step,
+	};
+}
+
+/** Percent params store 0..max but show 0..100%, so fields work on this display-space copy. */
+export function getDisplayParam({
+	param,
+}: {
+	param: NumberParamDefinition;
+}): NumberParamDefinition {
+	if (param.unit !== "percent") return param;
+	return {
+		...param,
+		min: 0,
+		max: 100,
+		step: 1,
+		displayMultiplier: 100 / (param.max ?? 100),
 	};
 }
 

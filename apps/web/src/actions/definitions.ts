@@ -78,6 +78,18 @@ export const ACTIONS = {
 		description: "Split and remove right",
 		category: "editing",
 	},
+	"toggle-keyframe-at-playhead": {
+		description: "Add or remove keyframes at the playhead",
+		category: "timeline",
+	},
+	"previous-keyframe": {
+		description: "Jump to the previous keyframe",
+		category: "navigation",
+	},
+	"next-keyframe": {
+		description: "Jump to the next keyframe",
+		category: "navigation",
+	},
 	"delete-selected": {
 		description: "Delete current selection",
 		category: "editing",
@@ -100,6 +112,11 @@ export const ACTIONS = {
 	},
 	"toggle-source-audio": {
 		description: "Extract or recover source audio",
+		category: "editing",
+	},
+	// No default shortcut (AE has none); the user may bind one.
+	"track-camera": {
+		description: "Track camera of the selected video clip",
 		category: "editing",
 	},
 	"select-all": {
@@ -152,6 +169,28 @@ export const ACTIONS = {
 
 export type TAction = keyof typeof ACTIONS;
 
+// Runtime mirror of the actions excluded from `TActionWithOptionalArgs`
+// (required args in `TActionArgsMap`). The `Record` type keeps it exhaustive.
+const ACTIONS_WITH_REQUIRED_ARGS: Record<
+	Exclude<TAction, TActionWithOptionalArgs>,
+	true
+> = {
+	"remove-media-asset": true,
+	"remove-media-assets": true,
+};
+
+const ACTION_WITH_OPTIONAL_ARGS_SET: ReadonlySet<string> = new Set(
+	Object.keys(ACTIONS).filter(
+		(action) => !Object.hasOwn(ACTIONS_WITH_REQUIRED_ARGS, action),
+	),
+);
+
+export function isActionWithOptionalArgs(
+	value: string,
+): value is TActionWithOptionalArgs {
+	return ACTION_WITH_OPTIONAL_ARGS_SET.has(value);
+}
+
 const ACTION_DEFAULT_SHORTCUTS = [
 	["toggle-play", ["space", "k"]],
 	["seek-forward", ["l"]],
@@ -165,6 +204,9 @@ const ACTION_DEFAULT_SHORTCUTS = [
 	["split", ["s"]],
 	["split-left", ["q"]],
 	["split-right", ["w"]],
+	["toggle-keyframe-at-playhead", ["alt+k"]],
+	["previous-keyframe", ["alt+left"]],
+	["next-keyframe", ["alt+right"]],
 	["delete-selected", ["backspace", "delete"]],
 	["copy-selected", ["ctrl+c"]],
 	["paste-copied", ["ctrl+v"]],

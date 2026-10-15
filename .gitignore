@@ -26,3 +26,8 @@ target/
 .cargo-tools/
 
 rust-migration-notes.md
+
+# Electron smoke test output (screenshot, project dump)
+apps/electron/test/out/
+# mediabunny's CJS bundle, copied by apps/electron/bundle.js for the main process (link import)
+apps/electron/vendor/

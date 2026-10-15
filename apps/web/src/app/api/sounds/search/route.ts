@@ -3,9 +3,11 @@ import { type NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { checkRateLimit } from "@/auth/rate-limit";
 
+const UPSTREAM_TIMEOUT_MS = 8_000;
+
 const searchParamsSchema = z.object({
 	q: z.string().max(500, "Query too long").optional(),
-	type: z.enum(["songs", "effects"]).optional(),
+	type: z.enum(["effects"]).optional(),
 	page: z.coerce.number().int().min(1).max(1000).default(1),
 	page_size: z.coerce.number().int().min(1).max(150).default(20),
 	sort: z
@@ -148,6 +150,15 @@ function transformFreesoundResult(
 }
 
 export async function GET(request: NextRequest) {
+	// The desktop app has no Freesound key or rate-limit store: answer at once
+	// instead of stalling on the rate limit and then failing.
+	if (process.env.NEXT_PUBLIC_DESKTOP === "1") {
+		return NextResponse.json(
+			{ error: "Sound search is not available in the desktop app." },
+			{ status: 503 },
+		);
+	}
+
 	try {
 		const { limited } = await checkRateLimit({ request });
 		if (limited) {
@@ -185,17 +196,6 @@ export async function GET(request: NextRequest) {
 			commercial_only,
 		} = validationResult.data;
 
-		if (type === "songs") {
-			return NextResponse.json(
-				{
-					error: "Songs are not available yet",
-					message:
-						"Song search functionality is coming soon. Try searching for sound effects instead.",
-				},
-				{ status: 501 },
-			);
-		}
-
 		const baseUrl = "https://freesound.org/apiv2/search/text/";
 
 		const sortParam = buildSortParameter({ query, sort });
@@ -210,12 +210,11 @@ export async function GET(request: NextRequest) {
 				"id,name,description,url,previews,download,duration,filesize,type,channels,bitrate,bitdepth,samplerate,username,tags,license,created,num_downloads,avg_rating,num_ratings",
 		});
 
-		const isEffectsSearch = type === "effects" || !type;
-		if (isEffectsSearch) {
-			applyEffectsFilters({ params, min_rating, commercial_only });
-		}
+		applyEffectsFilters({ params, min_rating, commercial_only });
 
-		const response = await fetch(`${baseUrl}?${params.toString()}`);
+		const response = await fetch(`${baseUrl}?${params.toString()}`, {
+			signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+		});
 
 		if (!response.ok) {
 			const errorText = await response.text();
@@ -271,6 +270,13 @@ export async function GET(request: NextRequest) {
 
 		return NextResponse.json(responseValidation.data);
 	} catch (error) {
+		if (error instanceof DOMException && error.name === "TimeoutError") {
+			console.error("Freesound request timed out");
+			return NextResponse.json(
+				{ error: "Sound search timed out" },
+				{ status: 504 },
+			);
+		}
 		console.error("Error searching sounds:", error);
 		return NextResponse.json(
 			{ error: "Internal server error" },

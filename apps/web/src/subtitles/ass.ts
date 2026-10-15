@@ -7,6 +7,8 @@ import type {
 const ASS_DEFAULT_PLAY_RES_X = 384;
 const ASS_DEFAULT_PLAY_RES_Y = 288;
 const STYLE_SECTION_NAMES = new Set(["v4 styles", "v4+ styles"]);
+// Imported font names are capped at the same length (fonts/font-file.ts).
+const MAX_FONT_NAME_LENGTH = 64;
 const ALIGNMENT_MAP: Record<
 	number,
 	{
@@ -407,7 +409,9 @@ function mapAssStyleToSubtitleStyle({
 			: undefined;
 
 	const styleOverrides: SubtitleStyleOverrides = {
-		...(style.fontname ? { fontFamily: style.fontname.trim() } : {}),
+		...(style.fontname
+			? { fontFamily: style.fontname.trim().slice(0, MAX_FONT_NAME_LENGTH) }
+			: {}),
 		...(fontSizeRatioOfPlayHeight !== null && fontSizeRatioOfPlayHeight > 0
 			? { fontSizeRatioOfPlayHeight }
 			: {}),

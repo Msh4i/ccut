@@ -1,3 +1,4 @@
+import { quoteFontFamily } from "@/fonts/font-family";
 import { FONT_SIZE_SCALE_REFERENCE } from "@/text/typography";
 import {
 	getTextVisualRect,
@@ -20,10 +21,6 @@ const SUBTITLE_MAX_WIDTH_RATIO = 0.8;
 const SUBTITLE_BOTTOM_MARGIN_RATIO = 0.05;
 const SUBTITLE_FONT_SIZE = 5;
 const MEASUREMENT_CANVAS_SIZE = 4096;
-
-function quoteFontFamily({ fontFamily }: { fontFamily: string }): string {
-	return `"${fontFamily.replace(/"/g, '\\"')}"`;
-}
 
 function createMeasurementContext(): CanvasRenderingContext2D | null {
 	const canvas = document.createElement("canvas");

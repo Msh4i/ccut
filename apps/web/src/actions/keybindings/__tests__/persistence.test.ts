@@ -142,3 +142,54 @@ describe("parseImportedKeybindings", () => {
 		).toThrow(/not-an-action/);
 	});
 });
+
+describe("the keyframe shortcuts reach a saved keymap", () => {
+	function migrateSaved({ keybindings }: { keybindings: Record<string, string> }) {
+		const decoded = decodePersistedKeybindingsState({
+			state: migratePersistedKeybindingsState({
+				state: { keybindings, isCustomized: true },
+				fromVersion: 7,
+			}),
+		});
+		if (!decoded) throw new Error("expected the keymap to decode");
+		return decoded.keybindings;
+	}
+
+	test("a keymap saved before round 7 gains Alt+K, Alt+Left and Alt+Right and keeps its own keys", () => {
+		const map = migrateSaved({ keybindings: { s: "split", "ctrl+z": "undo" } });
+		expect(map.get("alt+k")).toBe("toggle-keyframe-at-playhead");
+		expect(map.get("alt+left")).toBe("previous-keyframe");
+		expect(map.get("alt+right")).toBe("next-keyframe");
+		expect(map.get("s")).toBe("split");
+	});
+
+	test("a key the user already uses, or an action they already moved, is left alone", () => {
+		const map = migrateSaved({
+			keybindings: { "alt+k": "split", "ctrl+k": "next-keyframe" },
+		});
+		expect(map.get("alt+k")).toBe("split");
+		expect(map.has("alt+right")).toBe(false);
+		expect(map.get("ctrl+k")).toBe("next-keyframe");
+		expect(map.get("alt+left")).toBe("previous-keyframe");
+	});
+
+	test("a key press of Alt+K, as the keydown listener reads it, resolves to the action", async () => {
+		const { useKeybindingsStore, generateKeybindingString } = await import(
+			"@/actions/keybindings-store"
+		);
+		const pressed = (init: { key: string; code: string; altKey: boolean }) =>
+			generateKeybindingString({
+				...init,
+				ctrlKey: false,
+				metaKey: false,
+				shiftKey: false,
+				target: null,
+			});
+		const defaults = useKeybindingsStore.getState().keybindings;
+		expect(defaults.get(pressed({ key: "k", code: "KeyK", altKey: true }) ?? "k")).toBe("toggle-keyframe-at-playhead");
+		// Option+K on a Mac types a different character; the physical key still counts.
+		expect(pressed({ key: "˚", code: "KeyK", altKey: true })).toBe("alt+k");
+		expect(defaults.get(pressed({ key: "ArrowLeft", code: "ArrowLeft", altKey: true }) ?? "left")).toBe("previous-keyframe");
+		expect(defaults.get(pressed({ key: "ArrowRight", code: "ArrowRight", altKey: true }) ?? "right")).toBe("next-keyframe");
+	});
+});

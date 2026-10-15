@@ -5,7 +5,8 @@ export type SnapPointType =
 	| "element-end"
 	| "playhead"
 	| "bookmark"
-	| "keyframe";
+	| "keyframe"
+	| "beat";
 
 export interface SnapPoint {
 	time: MediaTime;

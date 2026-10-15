@@ -41,8 +41,13 @@ export function HandleButton({
 	return (
 		<button
 			type="button"
+			// A press that moves a few pixels must never start a native drag of the
+			// handle (or of a selection it is part of): the browser would answer
+			// with `pointercancel` and the gesture would end after two moves.
+			draggable={false}
+			onDragStart={(event) => event.preventDefault()}
 			className={cn(
-				"absolute flex items-center justify-center outline-none",
+				"absolute flex touch-none items-center justify-center outline-none select-none",
 				className,
 			)}
 			style={{
@@ -55,8 +60,13 @@ export function HandleButton({
 			}}
 			onPointerDown={onPointerDown}
 			onPointerMove={onPointerMove}
+			// The controllers capture the pointer, so the gesture ends on pointerup,
+			// on pointercancel or when the capture is lost, never on pointerleave: that
+			// one only arrives AFTER a cancel or a lost capture and ended the gesture
+			// at the angle reached so far, nothing said.
 			onPointerUp={onPointerUp}
-			onPointerLeave={onPointerUp}
+			onPointerCancel={onPointerUp}
+			onLostPointerCapture={onPointerUp}
 			onKeyDown={(event) => event.key === "Enter" && event.preventDefault()}
 			onKeyUp={(event) => event.key === "Enter" && event.preventDefault()}
 		>
@@ -194,7 +204,11 @@ export function IconHandle({
 			onPointerMove={onPointerMove}
 			onPointerUp={onPointerUp}
 		>
-			<HugeiconsIcon icon={icon} className="size-3" strokeWidth={2.5} />
+			<HugeiconsIcon
+				icon={icon}
+				className="pointer-events-none size-3"
+				strokeWidth={2.5}
+			/>
 		</HandleButton>
 	);
 }
@@ -238,7 +252,8 @@ export function BoundingBoxOutline({
 			onPointerDown={onPointerDown}
 			onPointerMove={onPointerMove}
 			onPointerUp={onPointerUp}
-			onPointerLeave={onPointerUp}
+			onPointerCancel={onPointerUp}
+			onLostPointerCapture={onPointerUp}
 		>
 			<rect
 				x={0.5}
@@ -295,7 +310,8 @@ export function ShapeOutline({
 			onPointerDown={onPointerDown}
 			onPointerMove={onPointerMove}
 			onPointerUp={onPointerUp}
-			onPointerLeave={onPointerUp}
+			onPointerCancel={onPointerUp}
+			onLostPointerCapture={onPointerUp}
 		>
 			<path
 				d={pathData}
@@ -346,7 +362,8 @@ export function CanvasPathOutline({
 			onPointerDown={onPointerDown}
 			onPointerMove={onPointerMove}
 			onPointerUp={onPointerUp}
-			onPointerLeave={onPointerUp}
+			onPointerCancel={onPointerUp}
+			onLostPointerCapture={onPointerUp}
 		>
 			<g
 				transform={`translate(${translateX} ${translateY}) scale(${scaleX} ${scaleY})`}
@@ -409,7 +426,8 @@ export function LineOverlay({
 					onPointerDown={onPointerDown}
 					onPointerMove={onPointerMove}
 					onPointerUp={onPointerUp}
-					onPointerLeave={onPointerUp}
+					onPointerCancel={onPointerUp}
+					onLostPointerCapture={onPointerUp}
 				/>
 			)}
 			<div

@@ -1,7 +1,4 @@
-import {
-	IndexedDBAdapter,
-	deleteDatabase,
-} from "@/services/storage/indexeddb-adapter";
+import { IndexedDBAdapter } from "@/services/storage/indexeddb-adapter";
 import type { MediaAssetData } from "@/services/storage/types";
 import { StorageMigration, type StorageMigrationRunArgs } from "./base";
 import type { MigrationResult, ProjectRecord } from "./transformers/types";
@@ -24,21 +21,9 @@ export class V1toV2Migration extends StorageMigration {
 		projectId,
 		project,
 	}: StorageMigrationRunArgs): Promise<MigrationResult<ProjectRecord>> {
+		// Legacy timeline DBs are kept: migrations are additive only (see AGENTS.md).
 		const context = await loadV1ToV2Context({ projectId, project });
-		const result = transformProjectV1ToV2({ project, context });
-
-		if (!result.skipped) {
-			try {
-				await deleteLegacyTimelineDbs({ projectId, project: result.project });
-			} catch (error) {
-				console.error(
-					`V1→V2 migration cleanup failed for project ${projectId}:`,
-					error,
-				);
-			}
-		}
-
-		return result;
+		return transformProjectV1ToV2({ project, context });
 	}
 }
 
@@ -121,20 +106,20 @@ async function loadLegacyTracksForScene({
 	const sceneDbName = `video-editor-timelines-${projectId}-${sceneId}`;
 	const projectDbName = `video-editor-timelines-${projectId}`;
 
-	const adapter = new IndexedDBAdapter<LegacyTimelineData>(
-		sceneDbName,
-		"timeline",
-		1,
-	);
+	const adapter = new IndexedDBAdapter<LegacyTimelineData>({
+		dbName: sceneDbName,
+		storeName: "timeline",
+		version: 1,
+	});
 
 	let data = await adapter.get("timeline");
 
 	if (!data && isMain) {
-		const projectAdapter = new IndexedDBAdapter<LegacyTimelineData>(
-			projectDbName,
-			"timeline",
-			1,
-		);
+		const projectAdapter = new IndexedDBAdapter<LegacyTimelineData>({
+			dbName: projectDbName,
+			storeName: "timeline",
+			version: 1,
+		});
 		data = await projectAdapter.get("timeline");
 	}
 
@@ -157,11 +142,11 @@ async function loadMediaTypesById({
 		return {};
 	}
 
-	const mediaMetadataAdapter = new IndexedDBAdapter<MediaAssetData>(
-		`video-editor-media-${projectId}`,
-		"media-metadata",
-		1,
-	);
+	const mediaMetadataAdapter = new IndexedDBAdapter<MediaAssetData>({
+		dbName: `video-editor-media-${projectId}`,
+		storeName: "media-metadata",
+		version: 1,
+	});
 
 	const mediaEntries = await Promise.all(
 		mediaIds.map(async (mediaId) => {
@@ -223,40 +208,4 @@ function collectLegacyMediaIds({
 	}
 
 	return Array.from(mediaIds);
-}
-
-async function deleteLegacyTimelineDbs({
-	projectId,
-	project,
-}: {
-	projectId: string;
-	project: ProjectRecord;
-}): Promise<void> {
-	const dbNames = getLegacyTimelineDbNames({ projectId, project });
-	await Promise.all(dbNames.map((dbName) => deleteDatabase({ dbName })));
-}
-
-function getLegacyTimelineDbNames({
-	projectId,
-	project,
-}: {
-	projectId: string;
-	project: ProjectRecord;
-}): string[] {
-	const scenes = project.scenes;
-	if (!Array.isArray(scenes)) {
-		return [`video-editor-timelines-${projectId}`];
-	}
-
-	const sceneDbNames = scenes.flatMap((scene) => {
-		if (!isRecord(scene)) {
-			return [];
-		}
-
-		return typeof scene.id === "string"
-			? [`video-editor-timelines-${projectId}-${scene.id}`]
-			: [];
-	});
-
-	return [...sceneDbNames, `video-editor-timelines-${projectId}`];
 }

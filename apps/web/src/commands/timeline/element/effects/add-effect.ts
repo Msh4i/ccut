@@ -2,7 +2,7 @@ import { Command, type CommandResult } from "@/commands/base-command";
 import { EditorCore } from "@/core";
 import { isVisualElement, updateElementInSceneTracks } from "@/timeline";
 import type { SceneTracks, VisualElement } from "@/timeline";
-import { buildDefaultEffectInstance } from "@/effects";
+import { buildDefaultEffectInstance, effectsRegistry } from "@/effects";
 
 function addEffectToElement({
 	element,
@@ -12,7 +12,12 @@ function addEffectToElement({
 	effectType: string;
 }): VisualElement {
 	const instance = buildDefaultEffectInstance({ effectType });
-	const currentEffects = element.effects ?? [];
+	const isFilter = (type: string) =>
+		effectsRegistry.get(type).category === "filter";
+	// A clip holds at most one filter: a new one replaces the old.
+	const currentEffects = (element.effects ?? []).filter(
+		(effect) => !isFilter(effectType) || !isFilter(effect.type),
+	);
 	return { ...element, effects: [...currentEffects, instance] };
 }
 

@@ -1,0 +1,1 @@
+Ccut text-mode test, no line ending

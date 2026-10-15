@@ -30,8 +30,9 @@ import { useTimelineStore } from "@/timeline/timeline-store";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
 	Bookmark02Icon,
+	Cancel01Icon,
+	CheckmarkCircle02Icon,
 	Delete02Icon,
-	SnowIcon,
 	ScissorIcon,
 	MagnetIcon,
 	SearchAddIcon,
@@ -47,8 +48,13 @@ import {
 import { HugeiconsIcon } from "@hugeicons/react";
 import { OcRippleIcon } from "@/components/icons";
 import { GraphEditorPopover } from "./graph-editor/popover";
+import { KeyframeCurveMenu } from "./keyframe-curve-menu";
+import { AutoHitsButton } from "./auto-hits-button";
+import { KeyframeToolbarGroup } from "./keyframe-toolbar-group";
+import { ToolbarButton } from "./toolbar-button";
 import { PopoverTrigger } from "@/components/ui/popover";
 import { useGraphEditorController } from "./graph-editor/use-controller";
+import { useBeatSelection } from "@/timeline/beats/use-beat-selection";
 
 export function TimelineToolbar({
 	zoomLevel,
@@ -92,6 +98,7 @@ function ToolbarLeftSection() {
 	);
 	const { selectedElements } = useElementSelection();
 	const graphEditor = useGraphEditorController();
+	const beatSelection = useBeatSelection();
 	const isCurrentlyBookmarked = useEditor((e) =>
 		e.scenes.isBookmarked({ time: e.playback.getCurrentTime() }),
 	);
@@ -184,13 +191,6 @@ function ToolbarLeftSection() {
 				/>
 
 				<ToolbarButton
-					icon={<HugeiconsIcon icon={SnowIcon} />}
-					tooltip="Freeze frame (coming soon)"
-					disabled={true}
-					onClick={({ event: _event }) => {}}
-				/>
-
-				<ToolbarButton
 					icon={<HugeiconsIcon icon={Delete02Icon} />}
 					tooltip="Delete element"
 					onClick={({ event }) =>
@@ -204,12 +204,34 @@ function ToolbarLeftSection() {
 					<ToolbarButton
 						icon={<HugeiconsIcon icon={Bookmark02Icon} />}
 						isActive={isCurrentlyBookmarked}
+						label="Bookmark"
 						tooltip={isCurrentlyBookmarked ? "Remove bookmark" : "Add bookmark"}
 						onClick={({ event }) =>
 							handleAction({ action: "toggle-bookmark", event })
 						}
 					/>
 				</Tooltip>
+
+				<AutoHitsButton />
+
+				<KeyframeToolbarGroup />
+
+				{beatSelection.count > 0 && (
+					<>
+						<ToolbarButton
+							icon={<HugeiconsIcon icon={CheckmarkCircle02Icon} />}
+							label="Keep selected beats"
+							tooltip={`Keep only the ${beatSelection.count} selected ${beatSelection.count === 1 ? "beat" : "beats"} (Esc clears the selection)`}
+							onClick={() => beatSelection.keep()}
+						/>
+						<ToolbarButton
+							icon={<HugeiconsIcon icon={Cancel01Icon} />}
+							label="Delete selected beats"
+							tooltip={`Delete the ${beatSelection.count} selected ${beatSelection.count === 1 ? "beat" : "beats"}`}
+							onClick={() => beatSelection.remove()}
+						/>
+					</>
+				)}
 
 				<GraphEditorPopover
 					open={graphEditor.open}
@@ -240,6 +262,7 @@ function ToolbarLeftSection() {
 						}
 					/>
 				</GraphEditorPopover>
+				<KeyframeCurveMenu />
 			</TooltipProvider>
 		</div>
 	);
@@ -327,50 +350,5 @@ function ToolbarRightSection({
 				</Button>
 			</div>
 		</div>
-	);
-}
-
-function ToolbarButton({
-	icon,
-	tooltip,
-	onClick,
-	disabled,
-	isActive,
-	buttonWrapper,
-}: {
-	icon: React.ReactNode;
-	tooltip: string;
-	onClick?: ({ event }: { event: React.MouseEvent }) => void;
-	disabled?: boolean;
-	isActive?: boolean;
-	buttonWrapper?: (button: React.ReactElement) => React.ReactElement;
-}) {
-	const button = (
-		<Button
-			variant={isActive ? "secondary" : "text"}
-			size="icon"
-			disabled={disabled}
-			onClick={onClick ? (event) => onClick({ event }) : undefined}
-			className={cn(
-				"rounded-sm",
-				disabled ? "cursor-not-allowed opacity-50" : "",
-			)}
-		>
-			{icon}
-		</Button>
-	);
-	const trigger = disabled ? (
-		<span className="inline-flex">{button}</span>
-	) : buttonWrapper ? (
-		buttonWrapper(button)
-	) : (
-		button
-	);
-
-	return (
-		<Tooltip delayDuration={200}>
-			<TooltipTrigger asChild>{trigger}</TooltipTrigger>
-			<TooltipContent>{tooltip}</TooltipContent>
-		</Tooltip>
 	);
 }

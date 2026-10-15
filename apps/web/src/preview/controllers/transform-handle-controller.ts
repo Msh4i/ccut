@@ -24,6 +24,7 @@ import {
 } from "@/animation";
 import type { ElementAnimations } from "@/animation/types";
 import type { ParamValues } from "@/params";
+import { planPinGesture, type PinGesturePlan, type PinOps } from "./pin-gesture";
 import { buildTransformFromParams, type Transform } from "@/rendering";
 import { resolveTransformAtTime } from "@/rendering/animation-values";
 import type {
@@ -56,6 +57,7 @@ interface CornerScaleSession extends CapturedPointerState {
 	readonly baseHeight: number;
 	readonly shouldClearScaleAnimation: boolean;
 	readonly animationsWithoutScale: ElementAnimations | undefined;
+	readonly pin: PinGesturePlan;
 }
 
 interface EdgeScaleSession extends CapturedPointerState {
@@ -72,6 +74,7 @@ interface EdgeScaleSession extends CapturedPointerState {
 	readonly rotationRad: number;
 	readonly shouldClearScaleAnimation: boolean;
 	readonly animationsWithoutScale: ElementAnimations | undefined;
+	readonly pin: PinGesturePlan;
 }
 
 interface RotationSession extends CapturedPointerState {
@@ -83,6 +86,7 @@ interface RotationSession extends CapturedPointerState {
 	readonly initialAngle: number;
 	readonly initialBoundsCx: number;
 	readonly initialBoundsCy: number;
+	readonly pin: PinGesturePlan;
 }
 
 type TransformSession =
@@ -150,6 +154,8 @@ export interface TransformHandleDeps {
 	scene: SceneReader;
 	timeline: TimelineOps;
 	preview: PreviewOptions;
+	/** Without it every element is handled as before. */
+	pins?: PinOps;
 }
 
 export interface TransformHandleDepsRef {
@@ -283,6 +289,8 @@ export class TransformHandleController {
 	private readonly subscribers = new Set<() => void>();
 
 	private session: TransformSession = IDLE_SESSION;
+	/** The transform last previewed in the running gesture, for sticking a stuck element again. */
+	private lastLook: Transform | null = null;
 
 	constructor({ depsRef }: { depsRef: TransformHandleDepsRef }) {
 		this.depsRef = depsRef;
@@ -331,6 +339,7 @@ export class TransformHandleController {
 		if (this.session.kind !== "idle") {
 			const session = this.session;
 			this.session = IDLE_SESSION;
+			this.lastLook = null;
 			this.deps.timeline.discardPreview();
 			this.clearSnapLines();
 			this.releaseCapturedPointer(session);
@@ -344,6 +353,7 @@ export class TransformHandleController {
 
 		const session = this.session;
 		this.session = IDLE_SESSION;
+		this.lastLook = null;
 		this.deps.timeline.discardPreview();
 		this.clearSnapLines();
 		this.releaseCapturedPointer(session);
@@ -384,6 +394,7 @@ export class TransformHandleController {
 			baseHeight: context.bounds.height / context.resolvedTransform.scaleY,
 			shouldClearScaleAnimation,
 			animationsWithoutScale,
+			pin: this.planPin({ context }),
 			pointerId: event.pointerId,
 			captureTarget: this.capturePointer({
 				target: event.currentTarget as HTMLElement,
@@ -419,6 +430,7 @@ export class TransformHandleController {
 			initialAngle,
 			initialBoundsCx: context.bounds.cx,
 			initialBoundsCy: context.bounds.cy,
+			pin: this.planPin({ context }),
 			pointerId: event.pointerId,
 			captureTarget: this.capturePointer({
 				target: event.currentTarget as HTMLElement,
@@ -461,6 +473,7 @@ export class TransformHandleController {
 			rotationRad: (context.bounds.rotation * Math.PI) / 180,
 			shouldClearScaleAnimation,
 			animationsWithoutScale,
+			pin: this.planPin({ context }),
 			pointerId: event.pointerId,
 			captureTarget: this.capturePointer({
 				target: event.currentTarget as HTMLElement,
@@ -508,11 +521,28 @@ export class TransformHandleController {
 		if (this.session.kind === "idle") return;
 
 		const session = this.session;
+		const look = this.lastLook;
 		this.session = IDLE_SESSION;
-		this.deps.timeline.commitPreview();
+		this.lastLook = null;
+		if (session.pin.isPinned && look) {
+			// The pin's channels were lifted for the gesture: drop that and stick
+			// the element again with the look it was left in, rather than
+			// committing a state without its pin.
+			this.deps.timeline.discardPreview();
+			this.deps.pins?.repin({ elementId: session.elementId, look });
+		} else {
+			this.deps.timeline.commitPreview();
+		}
 		this.clearSnapLines();
 		this.releaseCapturedPointer(session);
 		this.notify();
+	}
+
+	private planPin({ context }: { context: VisualSelectionContext }): PinGesturePlan {
+		return planPinGesture({
+			animations: context.element.animations,
+			isPinned: this.deps.pins?.isPinned({ elementId: context.elementId }) ?? false,
+		});
 	}
 
 	private notify(): void {
@@ -612,6 +642,12 @@ export class TransformHandleController {
 
 		this.deps.preview.onSnapLinesChange?.(activeLines);
 
+		const transform: Transform = {
+			...session.initialTransform,
+			scaleX: clampScaleNonZero(session.initialTransform.scaleX * snappedScale),
+			scaleY: clampScaleNonZero(session.initialTransform.scaleY * snappedScale),
+		};
+		this.lastLook = transform;
 		this.deps.timeline.previewElements([
 			{
 				trackId: session.trackId,
@@ -619,19 +655,13 @@ export class TransformHandleController {
 				updates: {
 					params: buildParamsWithTransform({
 						params: session.initialParams,
-						transform: {
-							...session.initialTransform,
-							scaleX: clampScaleNonZero(
-								session.initialTransform.scaleX * snappedScale,
-							),
-							scaleY: clampScaleNonZero(
-								session.initialTransform.scaleY * snappedScale,
-							),
-						},
+						transform,
 					}),
-					...(session.shouldClearScaleAnimation && {
-						animations: session.animationsWithoutScale,
-					}),
+					...(session.pin.isPinned
+						? { animations: session.pin.animationsWithoutPin }
+						: session.shouldClearScaleAnimation && {
+								animations: session.animationsWithoutScale,
+							}),
 				},
 			},
 		]);
@@ -706,6 +736,18 @@ export class TransformHandleController {
 			session.edge === "right" || session.edge === "left" ? xSnap : ySnap;
 		this.deps.preview.onSnapLinesChange?.(relevantSnap.activeLines);
 
+		const transform: Transform = {
+			...session.initialTransform,
+			scaleX:
+				session.edge === "right" || session.edge === "left"
+					? xSnap.snappedScale
+					: session.initialTransform.scaleX,
+			scaleY:
+				session.edge === "bottom"
+					? ySnap.snappedScale
+					: session.initialTransform.scaleY,
+		};
+		this.lastLook = transform;
 		this.deps.timeline.previewElements([
 			{
 				trackId: session.trackId,
@@ -713,21 +755,13 @@ export class TransformHandleController {
 				updates: {
 					params: buildParamsWithTransform({
 						params: session.initialParams,
-						transform: {
-							...session.initialTransform,
-							scaleX:
-								session.edge === "right" || session.edge === "left"
-									? xSnap.snappedScale
-									: session.initialTransform.scaleX,
-							scaleY:
-								session.edge === "bottom"
-									? ySnap.snappedScale
-									: session.initialTransform.scaleY,
-						},
+						transform,
 					}),
-					...(session.shouldClearScaleAnimation && {
-						animations: session.animationsWithoutScale,
-					}),
+					...(session.pin.isPinned
+						? { animations: session.pin.animationsWithoutPin }
+						: session.shouldClearScaleAnimation && {
+								animations: session.animationsWithoutScale,
+							}),
 				},
 			},
 		]);
@@ -752,6 +786,11 @@ export class TransformHandleController {
 			? { snappedRotation: newRotate }
 			: snapRotation({ proposedRotation: newRotate });
 
+		const transform: Transform = {
+			...session.initialTransform,
+			rotate: snappedRotation,
+		};
+		this.lastLook = transform;
 		this.deps.timeline.previewElements([
 			{
 				trackId: session.trackId,
@@ -759,10 +798,10 @@ export class TransformHandleController {
 				updates: {
 					params: buildParamsWithTransform({
 						params: session.initialParams,
-						transform: {
-							...session.initialTransform,
-							rotate: snappedRotation,
-						},
+						transform,
+					}),
+					...(session.pin.isPinned && {
+						animations: session.pin.animationsWithoutPin,
 					}),
 				},
 			},

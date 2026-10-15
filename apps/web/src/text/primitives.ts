@@ -1,3 +1,4 @@
+import { quoteFontFamily } from "@/fonts/font-family";
 import type { TextCanvasContext, TextBlockMeasurement } from "@/text/layout";
 import { DEFAULTS } from "@/timeline/defaults";
 import { clamp } from "@/utils/math";
@@ -51,10 +52,6 @@ export interface ResolvedTextBackgroundLike {
 	offsetX: number;
 	offsetY: number;
 	cornerRadius: number;
-}
-
-export function quoteFontFamily({ fontFamily }: { fontFamily: string }): string {
-	return `"${fontFamily.replace(/"/g, '\\"')}"`;
 }
 
 export function buildTextFontString({
@@ -138,6 +135,51 @@ export function measureTextLayout({
 	};
 }
 
+const LINE_ORIGIN_RATIO: Record<TextAlign, number> = {
+	left: 0,
+	center: -0.5,
+	right: -1,
+};
+
+/**
+ * Draws only the first `length` UTF-16 units of a line, exactly where the full
+ * line puts them: the line is aligned by its full width, not by what is shown.
+ */
+function drawRevealedLine({
+	ctx,
+	layout,
+	index,
+	lineY,
+	length,
+}: {
+	ctx: TextCanvasContext;
+	layout: MeasuredTextLayout;
+	index: number;
+	lineY: number;
+	length: number;
+}): void {
+	const text = layout.lines[index].slice(0, length);
+	if (!text) return;
+
+	ctx.save();
+	ctx.textAlign = "left";
+	ctx.translate(
+		LINE_ORIGIN_RATIO[layout.textAlign] * layout.lineMetrics[index].width,
+		0,
+	);
+	ctx.fillText(text, 0, lineY);
+	drawTextDecoration({
+		ctx,
+		textDecoration: layout.textDecoration,
+		lineWidth: ctx.measureText(text).width,
+		lineY,
+		metrics: layout.lineMetrics[index],
+		scaledFontSize: layout.scaledFontSize,
+		textAlign: "left",
+	});
+	ctx.restore();
+}
+
 export function drawMeasuredTextLayout({
 	ctx,
 	layout,
@@ -145,6 +187,7 @@ export function drawMeasuredTextLayout({
 	background,
 	backgroundColor,
 	textBaseline = "middle",
+	visibleLengths,
 }: {
 	ctx: TextCanvasContext;
 	layout: MeasuredTextLayout;
@@ -152,6 +195,8 @@ export function drawMeasuredTextLayout({
 	background?: ResolvedTextBackgroundLike | null;
 	backgroundColor?: string;
 	textBaseline?: CanvasTextBaseline;
+	/** When set, only this many UTF-16 units of each line are drawn (text reveal). The layout and background stay at full size. */
+	visibleLengths?: number[];
 }): void {
 	ctx.font = layout.fontString;
 	ctx.textAlign = layout.textAlign;
@@ -199,6 +244,16 @@ export function drawMeasuredTextLayout({
 
 	for (let index = 0; index < layout.lines.length; index++) {
 		const lineY = index * layout.lineHeightPx - layout.block.visualCenterOffset;
+		if (visibleLengths) {
+			drawRevealedLine({
+				ctx,
+				layout,
+				index,
+				lineY,
+				length: visibleLengths[index],
+			});
+			continue;
+		}
 		ctx.fillText(layout.lines[index], 0, lineY);
 		drawTextDecoration({
 			ctx,

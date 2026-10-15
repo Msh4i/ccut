@@ -1,3 +1,4 @@
+import { describeId } from "../describe-id";
 import type {
 	StickerBrowseResult,
 	StickerItem,
@@ -26,6 +27,8 @@ export const logosProvider: StickerProvider = {
 		return EMPTY_BROWSE_RESULT;
 	},
 	resolveUrl({ stickerId }: { stickerId: string }): string {
-		return stickerId;
+		// The id used to be returned as the URL, which made "logos:/../api/health"
+		// a same-origin request. There are no logo stickers (the tab is disabled).
+		throw new Error(`The logos provider has no stickers: "${describeId({ value: stickerId })}"`);
 	},
 };

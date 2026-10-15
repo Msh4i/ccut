@@ -33,6 +33,14 @@ export type QuadTransformDescriptor = {
 	rotationDegrees: number;
 	flipX: boolean;
 	flipY: boolean;
+	/**
+	 * 3D layers only: row-major 3x3 map from the layer texture's UV square
+	 * ([0, 1]^2, u right, v down) to canvas pixels, scaled so that w > 0 for
+	 * points in front of the camera. When present the compositor places the
+	 * layer with it and ignores the fields above (they still carry the layer's
+	 * 2D bounding box for tools). Absent for 2D layers.
+	 */
+	homography?: number[] | null;
 };
 
 export type LayerMaskDescriptor = {
@@ -48,7 +56,7 @@ export type TextureCanvasDrawFn = (
 /**
  * A layer texture whose pixels come from somewhere outside the renderer —
  * typically a decoded video/image frame or a sticker. Cached by reference
- * identity of the source object.
+ * identity of the source object plus `version`.
  */
 export type ExternalTextureDescriptor = {
 	kind: "external";
@@ -56,6 +64,12 @@ export type ExternalTextureDescriptor = {
 	source: CanvasImageSource;
 	width: number;
 	height: number;
+	/**
+	 * Changes whenever the pixels of `source` change while the object stays the
+	 * same (a pooled video-frame canvas redrawn with the next frame). Omitted for
+	 * sources whose pixels never change.
+	 */
+	version?: number;
 };
 
 /**

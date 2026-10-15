@@ -23,7 +23,8 @@ import { Button } from "@/components/ui/button";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { MinusSignIcon, PlusSignIcon } from "@hugeicons/core-free-icons";
 import { cn } from "@/utils/ui";
-import type { MediaTime } from "@/wasm";
+import { mediaTime, type MediaTime } from "@/wasm";
+import { planStrokeToggle } from "@/graphics/stroke-toggle";
 
 registerDefaultGraphics();
 
@@ -109,38 +110,41 @@ function StrokeSection({
 	});
 	const strokeParams = definition.params.filter((p) => p.group === "stroke");
 	const lastStrokeWidth = useRef(DEFAULT_STROKE_WIDTH);
-	const isStrokeEnabled = Number(element.params.strokeWidth ?? 0) > 0;
+	const isStrokeEnabled = planStrokeToggle({
+		element: liveElement,
+		localTime,
+		rememberedWidth: DEFAULT_STROKE_WIDTH,
+	}).wasEnabled;
 
 	const toggleStroke = () => {
-		if (isStrokeEnabled) {
-			lastStrokeWidth.current = Number(
-				element.params.strokeWidth ?? DEFAULT_STROKE_WIDTH,
-			);
-			editor.timeline.updateElements({
-				updates: [
-					{
-						trackId,
-						elementId: element.id,
-						patch: { params: { ...element.params, strokeWidth: 0 } },
-					},
-				],
-			});
-		} else {
-			editor.timeline.updateElements({
-				updates: [
-					{
-						trackId,
-						elementId: element.id,
-						patch: {
-							params: {
-								...element.params,
-								strokeWidth: lastStrokeWidth.current,
-							},
-						},
-					},
-				],
-			});
+		const strokePlan = planStrokeToggle({
+			element: liveElement,
+			localTime,
+			rememberedWidth: lastStrokeWidth.current,
+		});
+		if (strokePlan.widthToRemember !== null) {
+			lastStrokeWidth.current = strokePlan.widthToRemember;
 		}
+		const { action } = strokePlan;
+		if (action.kind === "key") {
+			editor.timeline.upsertKeyframes({
+				keyframes: [
+					{
+						trackId,
+						elementId: element.id,
+						propertyPath: action.propertyPath,
+						time: mediaTime({ ticks: action.time }),
+						value: action.value,
+					},
+				],
+			});
+			return;
+		}
+		editor.timeline.updateElements({
+			updates: [
+				{ trackId, elementId: element.id, patch: { params: action.params } },
+			],
+		});
 	};
 
 	return (
@@ -233,6 +237,7 @@ function AnimatedGraphicParamField({
 				isActive: animatedParam.isKeyframedAtTime,
 				isDisabled: !isPlayheadWithinElementRange,
 				onToggle: animatedParam.toggleKeyframe,
+				onCurveMenu: animatedParam.openCurveMenu,
 			}}
 		/>
 	);

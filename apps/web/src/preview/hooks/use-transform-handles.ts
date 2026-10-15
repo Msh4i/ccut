@@ -2,9 +2,11 @@ import { useEffect, useReducer, useState } from "react";
 import { usePreviewViewport } from "@/preview/components/preview-viewport";
 import type { OnSnapLinesChange } from "@/preview/hooks/use-preview-interaction";
 import { useEditor } from "@/editor/use-editor";
+import { useCustomFontsStore } from "@/fonts/custom-fonts-store";
 import { useCommittedRef } from "@/hooks/use-committed-ref";
 import { useShiftKey } from "@/hooks/use-shift-key";
 import { registerCanceller } from "@/editor/cancel-interaction";
+import { cameraPinOps } from "@/preview/camera-pin-ops";
 import {
 	TransformHandleController,
 	type TransformHandleDeps,
@@ -27,6 +29,9 @@ export function useTransformHandles({
 	const canvasSize = useEditor(
 		(e) => e.project.getActive().settings.canvasSize,
 	);
+	// Text bounds depend on the loaded fonts: importing or deleting one must
+	// re-measure the selection box even though the tracks did not change.
+	useCustomFontsStore((state) => state.version);
 	const deps: TransformHandleDeps = {
 		viewport,
 		input: {
@@ -48,6 +53,7 @@ export function useTransformHandles({
 		preview: {
 			onSnapLinesChange,
 		},
+		pins: cameraPinOps,
 	};
 	const depsRef = useCommittedRef(deps);
 	const [controller] = useState(

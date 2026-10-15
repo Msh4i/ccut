@@ -1,11 +1,8 @@
-⚠️ READ BEFORE SUBMITTING ⚠️
+## What does this change?
 
-We are not currently accepting PRs except for critical bugs.
+<!-- A short description, and the issue it closes (for example: Closes #12). -->
 
-If this is a bug fix:
-- [ ] I've opened an issue first
-- [ ] This was approved by a maintainer
+## How was it checked?
 
-If this is a feature:
-
-This PR will be closed. Please open an issue to discuss first.
+- [ ] `bun run qa` passes (TypeScript, tests, ESLint)
+- [ ] I tried the change in the editor (screenshot or short clip below if it changes the UI)

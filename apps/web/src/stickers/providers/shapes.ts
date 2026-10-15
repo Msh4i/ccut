@@ -1,6 +1,8 @@
 import { buildGraphicPreviewUrl, buildDefaultGraphicInstance, graphicsRegistry, registerDefaultGraphics } from "@/graphics";
 import type { ParamValues } from "@/params";
 import { buildStickerId, parseStickerId } from "../sticker-id";
+import { clampQuery } from "../search-fold";
+import { paginate } from "./catalog-utils";
 import type {
 	StickerBrowseResult,
 	StickerItem,
@@ -57,7 +59,9 @@ function getShapePreset({
 }): ShapeGraphicPreset | null {
 	return (
 		getShapePresets().find((preset) => preset.shapeKey === shapeKey) ??
-		LEGACY_SHAPE_PRESETS[shapeKey] ??
+		(Object.hasOwn(LEGACY_SHAPE_PRESETS, shapeKey)
+			? LEGACY_SHAPE_PRESETS[shapeKey]
+			: undefined) ??
 		null
 	);
 }
@@ -118,7 +122,7 @@ function toStickerItem({
 }
 
 function filterShapesByQuery({ query }: { query: string }): ShapeGraphicPreset[] {
-	const normalizedQuery = query.trim().toLowerCase();
+	const normalizedQuery = clampQuery({ query }).trim().toLowerCase();
 	const presets = getShapePresets();
 	if (!normalizedQuery) {
 		return presets;
@@ -142,16 +146,7 @@ function paginateShapes({
 	shapes: ShapeGraphicPreset[];
 	options?: { page?: number; limit?: number };
 }): { items: ShapeGraphicPreset[]; hasMore: boolean; total: number } {
-	const page = Math.max(1, options?.page ?? 1);
-	const limit = Math.max(1, options?.limit ?? getShapePresets().length);
-	const startIndex = (page - 1) * limit;
-	const endIndex = startIndex + limit;
-	const pagedItems = shapes.slice(startIndex, endIndex);
-	return {
-		items: pagedItems,
-		hasMore: endIndex < shapes.length,
-		total: shapes.length,
-	};
+	return paginate({ items: shapes, options });
 }
 
 export const shapesProvider: StickerProvider = {
@@ -202,5 +197,9 @@ export const shapesProvider: StickerProvider = {
 	}): string {
 		const preset = parseShapeStickerId({ stickerId });
 		return buildShapeUrl({ shapeKey: preset?.shapeKey ?? "rectangle" });
+	},
+	async describeSticker({ stickerId }): Promise<string | null> {
+		// The preset's own name, like the grid tile and the dragged tile have.
+		return parseShapeStickerId({ stickerId })?.name ?? null;
 	},
 };

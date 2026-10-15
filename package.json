@@ -19,16 +19,20 @@
     "lint:web:fix": "eslint apps/web/src --ext .ts,.tsx --fix",
     "preview:web": "turbo run preview --filter=@opencut/web",
     "publish:wasm": "bun run build:wasm && npm publish rust/wasm/pkg --access public",
+    "qa": "bun run typecheck:web && bun test && bun run lint:web",
+    "qa:full": "bun run qa && node apps/electron/bundle.js && bun run test:electron",
     "start:tools": "turbo run start --filter=@opencut/tools",
-    "test": "bun test"
+    "test": "bun test",
+    "test:electron": "node apps/electron/test/smoke.js",
+    "typecheck:web": "node apps/web/node_modules/typescript/bin/tsc -p apps/web --noEmit --incremental false"
   },
   "dependencies": {
     "@types/react": "^19.2.10",
     "@types/react-dom": "^19.2.3",
     "better-auth": "^1.4.15",
-    "next": "^16.1.3",
+    "next": "^16.3.8",
     "opencut": ".",
-    "opencut-wasm": "^0.2.10"
+    "opencut-wasm": "workspace:*"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
@@ -38,6 +42,7 @@
     "eslint-plugin-jsx-a11y": "^6.10.2",
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.1.1",
+    "fake-indexeddb": "^6.2.5",
     "globals": "^17.5.0",
     "prettier": "^3.8.3",
     "turbo": "^2.8.20",
@@ -45,6 +50,7 @@
     "typescript-eslint": "^8.59.0"
   },
   "trustedDependencies": [
-    "@tailwindcss/oxide"
+    "@tailwindcss/oxide",
+    "electron"
   ]
 }

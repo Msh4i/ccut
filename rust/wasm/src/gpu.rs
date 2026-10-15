@@ -62,6 +62,35 @@ pub async fn initialize_gpu() -> Result<(), JsValue> {
     Ok(())
 }
 
+/// Uncaptured GPU errors since `initializeGpu` (each distinct message is also
+/// logged once to the console): `{ count: number, lastMessage: string | null }`.
+/// Zero before the GPU is initialised.
+#[wasm_bindgen(js_name = getGpuErrorStats)]
+pub fn get_gpu_error_stats() -> Object {
+    let stats = GPU_RUNTIME
+        .with(|runtime| {
+            runtime
+                .borrow()
+                .as_ref()
+                .map(|gpu_runtime| gpu_runtime.context.gpu_error_stats())
+        })
+        .unwrap_or_default();
+    let object = Object::new();
+    let _ = Reflect::set(
+        &object,
+        &JsValue::from_str("count"),
+        &JsValue::from_f64(stats.count as f64),
+    );
+    let _ = Reflect::set(
+        &object,
+        &JsValue::from_str("lastMessage"),
+        &stats
+            .last_message
+            .map_or(JsValue::NULL, |message| JsValue::from_str(&message)),
+    );
+    object
+}
+
 pub(crate) fn with_gpu_runtime<T>(
     action: impl FnOnce(&GpuRuntime) -> Result<T, JsValue>,
 ) -> Result<T, JsValue> {

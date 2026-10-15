@@ -39,6 +39,7 @@ export const BASE_MASK_PARAM_DEFINITIONS: ParamDefinition<
 		max: MAX_FEATHER,
 		step: 1,
 		unit: "percent",
+		unitLabel: "percent",
 	},
 	{
 		key: "strokeWidth",

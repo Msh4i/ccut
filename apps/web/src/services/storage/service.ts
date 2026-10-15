@@ -22,6 +22,11 @@ import {
 	runStorageMigrations,
 } from "@/services/storage/migrations";
 import type { Bookmark, SceneTracks, TScene } from "@/timeline";
+import { normalizeSceneTracksBeats } from "@/timeline/beats/normalize";
+import {
+	normalizeSceneTracksCameraTracker,
+	restoreUnusableCameraTrackers,
+} from "@/tracking/camera3d/engine/normalize";
 import { roundMediaTime } from "@/wasm";
 
 function normalizeBookmarks({ raw }: { raw: unknown }): Bookmark[] {
@@ -86,6 +91,11 @@ class StorageService {
 
 		this.migrationsPromise = runStorageMigrations({ migrations }).then(
 			() => undefined,
+			(error: unknown) => {
+				// Allow a retry on the next call instead of caching the failure.
+				this.migrationsPromise = null;
+				throw error;
+			},
 		);
 		await this.migrationsPromise;
 	}
@@ -139,7 +149,9 @@ class StorageService {
 			id: scene.id,
 			name: scene.name,
 			isMain: scene.isMain,
-			tracks: this.stripAudioBuffers({ tracks: scene.tracks }),
+			tracks: restoreUnusableCameraTrackers({
+				tracks: this.stripAudioBuffers({ tracks: scene.tracks }),
+			}),
 			bookmarks: scene.bookmarks,
 			createdAt: scene.createdAt.toISOString(),
 			updatedAt: scene.updatedAt.toISOString(),
@@ -195,7 +207,11 @@ class StorageService {
 				id: scene.id,
 				name: scene.name,
 				isMain: scene.isMain,
-				tracks: scene.tracks,
+				// stored data is untrusted: what is malformed is dropped (beats) or set
+				// aside (Track Camera records, written back unchanged by saveProject), in memory only
+				tracks: normalizeSceneTracksCameraTracker({
+					tracks: normalizeSceneTracksBeats({ tracks: scene.tracks }),
+				}),
 				bookmarks: normalizeBookmarks({ raw: scene.bookmarks }),
 				createdAt: new Date(scene.createdAt),
 				updatedAt: new Date(scene.updatedAt),
@@ -466,15 +482,21 @@ class StorageService {
 		};
 	}
 
+	// Throws when the read fails. The write paths need that: rewriting the list
+	// from an empty fallback would erase every saved sound.
+	private async readSavedSounds(): Promise<SavedSoundsData> {
+		const savedSoundsData = await this.savedSoundsAdapter.get("user-sounds");
+		return (
+			savedSoundsData || {
+				sounds: [],
+				lastModified: new Date().toISOString(),
+			}
+		);
+	}
+
 	async loadSavedSounds(): Promise<SavedSoundsData> {
 		try {
-			const savedSoundsData = await this.savedSoundsAdapter.get("user-sounds");
-			return (
-				savedSoundsData || {
-					sounds: [],
-					lastModified: new Date().toISOString(),
-				}
-			);
+			return await this.readSavedSounds();
 		} catch (error) {
 			console.error("Failed to load saved sounds:", error);
 			return { sounds: [], lastModified: new Date().toISOString() };
@@ -487,7 +509,7 @@ class StorageService {
 		soundEffect: SoundEffect;
 	}): Promise<void> {
 		try {
-			const currentData = await this.loadSavedSounds();
+			const currentData = await this.readSavedSounds();
 
 			if (currentData.sounds.some((sound) => sound.id === soundEffect.id)) {
 				return; // Already saved
@@ -522,7 +544,7 @@ class StorageService {
 
 	async removeSavedSound({ soundId }: { soundId: number }): Promise<void> {
 		try {
-			const currentData = await this.loadSavedSounds();
+			const currentData = await this.readSavedSounds();
 
 			const updatedData: SavedSoundsData = {
 				sounds: currentData.sounds.filter((sound) => sound.id !== soundId),

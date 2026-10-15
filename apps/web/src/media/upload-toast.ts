@@ -1,4 +1,5 @@
 import { toast } from "sonner";
+import { waitForNextPaint } from "./next-paint";
 
 export interface MediaUploadToastResult {
 	uploadedCount: number;
@@ -7,14 +8,6 @@ export interface MediaUploadToastResult {
 
 function getAssetLabel({ count }: { count: number }): string {
 	return count === 1 ? "media asset" : "media assets";
-}
-
-function waitForNextPaint(): Promise<void> {
-	return new Promise((resolve) => {
-		requestAnimationFrame(() => {
-			requestAnimationFrame(() => resolve());
-		});
-	});
 }
 
 export async function showMediaUploadToast<T extends MediaUploadToastResult>({

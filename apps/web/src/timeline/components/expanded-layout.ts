@@ -17,6 +17,7 @@ interface PropertyGroupDefinition {
 
 const PROPERTY_GROUPS: PropertyGroupDefinition[] = [
 	{ matchesPath: (path) => path.startsWith("transform.") || path === "opacity" },
+	{ matchesPath: (path) => path.startsWith("transform3d.") },
 	{ matchesPath: (path) => path === "volume" || path === "color" },
 	{ matchesPath: (path) => path.startsWith("background.") },
 	{ matchesPath: (path) => path.startsWith("params.") },
@@ -38,6 +39,18 @@ const PROPERTY_LABELS: Partial<Record<string, string>> = {
 	"background.offsetX": "BG Offset X",
 	"background.offsetY": "BG Offset Y",
 	"background.cornerRadius": "Corner Radius",
+	"transform3d.positionX": "3D Position X",
+	"transform3d.positionY": "3D Position Y",
+	"transform3d.positionZ": "3D Position Z",
+	"transform3d.orientationX": "Orientation X",
+	"transform3d.orientationY": "Orientation Y",
+	"transform3d.orientationZ": "Orientation Z",
+	"transform3d.rotationX": "3D Rotation X",
+	"transform3d.rotationY": "3D Rotation Y",
+	"transform3d.rotationZ": "3D Rotation Z",
+	"transform3d.scaleX": "3D Scale X",
+	"transform3d.scaleY": "3D Scale Y",
+	"transform3d.scaleZ": "3D Scale Z",
 };
 
 export function getPropertyLabel(path: AnimationPath): string {

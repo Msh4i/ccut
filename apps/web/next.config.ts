@@ -2,9 +2,14 @@ import type { NextConfig } from "next";
 import { withBotId } from "botid/next/config";
 import { withContentCollections } from "@content-collections/next";
 
+const isDesktop = process.env.NEXT_PUBLIC_DESKTOP === "1";
+
 const nextConfig: NextConfig = {
 	compiler: {
-		removeConsole: process.env.NODE_ENV === "production",
+		removeConsole:
+			process.env.NODE_ENV === "production"
+				? { exclude: ["error", "warn"] }
+				: false,
 	},
 	reactStrictMode: true,
 	productionBrowserSourceMaps: true,
@@ -51,4 +56,9 @@ const nextConfig: NextConfig = {
 	},
 };
 
-export default withContentCollections(withBotId(nextConfig));
+// Desktop: no image optimizer, and no withBotId (its rewrites proxy api.vercel.com).
+export default withContentCollections(
+	isDesktop
+		? { ...nextConfig, images: { unoptimized: true } }
+		: withBotId(nextConfig),
+);

@@ -3,6 +3,8 @@ import {
 	MASKABLE_ELEMENT_TYPES,
 	RETIMABLE_ELEMENT_TYPES,
 	VISUAL_ELEMENT_TYPES,
+	type CameraElement,
+	type CreateCameraElement,
 	type CreateEffectElement,
 	type CreateGraphicElement,
 	type CreateTimelineElement,
@@ -24,12 +26,13 @@ import {
 } from "@/timeline";
 import { DEFAULTS } from "@/timeline/defaults";
 import type { MediaType } from "@/media/types";
-import { buildDefaultEffectInstance } from "@/effects";
+import { buildDefaultEffectInstance, effectsRegistry } from "@/effects";
 import { buildDefaultGraphicInstance } from "@/graphics";
 import type { ParamValues } from "@/params";
 import {
 	buildDefaultParamValues,
 	getBuiltInElementParams,
+	isLayer3DParamKey,
 } from "@/params/registry";
 import { capitalizeFirstLetter } from "@/utils/string";
 import { type MediaTime, ZERO_MEDIA_TIME } from "@/wasm";
@@ -58,10 +61,16 @@ export function isRetimableElement(
 	return (RETIMABLE_ELEMENT_TYPES as readonly string[]).includes(element.type);
 }
 
+export function isCameraElement(
+	element: TimelineElement,
+): element is CameraElement {
+	return element.type === "camera";
+}
+
 export function canElementBeHidden(
 	element: TimelineElement,
-): element is VisualElement {
-	return isVisualElement(element);
+): element is VisualElement | CameraElement {
+	return isVisualElement(element) || isCameraElement(element);
 }
 
 export function hasElementEffects({
@@ -90,12 +99,20 @@ export function requiresMediaId({
 	);
 }
 
+/**
+ * The registry's defaults for a new element. The 3D layer keys are left out:
+ * a new element is 2D, and an absent `transform3d.*` reads as 2D.
+ */
 function buildDefaultElementParams({
 	type,
 }: {
 	type: TimelineElement["type"];
 }): ParamValues {
-	return buildDefaultParamValues(getBuiltInElementParams({ type }));
+	return buildDefaultParamValues(
+		getBuiltInElementParams({ type }).filter(
+			(param) => !isLayer3DParamKey({ key: param.key }),
+		),
+	);
 }
 
 export function buildTextElement({
@@ -121,6 +138,36 @@ export function buildTextElement({
 	};
 }
 
+/** AE's name for the camera a camera tracker creates. */
+export const DEFAULT_CAMERA_ELEMENT_NAME = "3D Tracker Camera";
+
+/**
+ * A camera layer reproducing the camera solved on the video clip
+ * `sourceElementId` (Track Camera). It has no params of its own.
+ */
+export function buildCameraElement({
+	sourceElementId,
+	startTime,
+	duration,
+	name,
+}: {
+	sourceElementId: string;
+	startTime: MediaTime;
+	duration: MediaTime;
+	name?: string;
+}): CreateCameraElement {
+	return {
+		type: "camera",
+		name: name ?? DEFAULT_CAMERA_ELEMENT_NAME,
+		sourceElementId,
+		startTime,
+		duration,
+		trimStart: ZERO_MEDIA_TIME,
+		trimEnd: ZERO_MEDIA_TIME,
+		params: {},
+	};
+}
+
 export function buildEffectElement({
 	effectType,
 	startTime,
@@ -133,7 +180,7 @@ export function buildEffectElement({
 	const instance = buildDefaultEffectInstance({ effectType });
 	return {
 		type: "effect",
-		name: capitalizeFirstLetter({ string: instance.type }),
+		name: effectsRegistry.get(instance.type).name,
 		effectType,
 		params: instance.params,
 		duration: duration ?? DEFAULT_NEW_ELEMENT_DURATION,

@@ -25,6 +25,7 @@ import {
 import { getElementEdgeSnapPoints } from "@/timeline/element-snap-source";
 import { getPlayheadSnapPoints } from "@/timeline/playhead-snap-source";
 import { getAnimationKeyframeSnapPointsForTimeline } from "@/timeline/animation-snap-points";
+import { getBeatSnapPoints } from "@/timeline/beats";
 import {
 	isRetimableElement,
 	type SceneTracks,
@@ -290,6 +291,9 @@ export class ResizeController {
 						tracks,
 						excludeElementIds,
 					}),
+				// Trimming never moves a clip's own beats on the timeline, so they
+				// stay valid snap targets (no exclusion).
+				() => getBeatSnapPoints({ tracks }),
 			],
 		});
 		const maxSnapDistance = getTimelineSnapThresholdInTicks({ zoomLevel });

@@ -3,6 +3,7 @@ import { DEFAULTS } from "@/timeline/defaults";
 import type { TextElement } from "@/timeline";
 import type { TextBackground } from "@/text/background";
 import { resolveNumberAtTime } from "@/animation/values";
+import { resolveAnimationPathValueAtTime } from "@/animation/resolve";
 import {
 	getTextVisualRect,
 } from "./layout";
@@ -73,7 +74,7 @@ export function measureTextElement({
 	localTime: number;
 	ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 }): MeasuredTextElement {
-	const text = buildTextLayoutParamsFromElement({ element });
+	const text = buildTextLayoutParamsFromElement({ element, localTime });
 	const measuredLayout = measureTextLayout({
 		text,
 		canvasHeight,
@@ -129,10 +130,42 @@ export function measureTextElement({
 	};
 }
 
-export function buildTextLayoutParamsFromElement({
+/** A number param as it is at `localTime`: its keyframes when it has any, the fixed value otherwise. */
+function readAnimatedNumberParam({
 	element,
+	key,
+	fallback,
+	localTime,
 }: {
 	element: TextElement;
+	key: string;
+	fallback: number;
+	localTime: number | undefined;
+}): number {
+	const fixed = readNumberParam({ params: element.params, key, fallback });
+	if (localTime === undefined) {
+		return fixed;
+	}
+	return resolveAnimationPathValueAtTime({
+		animations: element.animations,
+		propertyPath: key,
+		localTime: Math.max(0, localTime),
+		fallbackValue: fixed,
+	});
+}
+
+/**
+ * The text's layout inputs. With `localTime` (the renderer, preview and export
+ * alike) font size, letter spacing and line height are the animated values at
+ * that time; without it, the fixed ones (panels, tiles and the edit overlay,
+ * which show the text as the user set it).
+ */
+export function buildTextLayoutParamsFromElement({
+	element,
+	localTime,
+}: {
+	element: TextElement;
+	localTime?: number;
 }): TextLayoutParams {
 	return {
 		content: readStringParam({
@@ -140,10 +173,11 @@ export function buildTextLayoutParamsFromElement({
 			key: "content",
 			fallback: "Default text",
 		}),
-		fontSize: readNumberParam({
-			params: element.params,
+		fontSize: readAnimatedNumberParam({
+			element,
 			key: "fontSize",
 			fallback: 15,
+			localTime,
 		}),
 		fontFamily: readStringParam({
 			params: element.params,
@@ -166,15 +200,17 @@ export function buildTextLayoutParamsFromElement({
 			value: element.params.textDecoration,
 			fallback: "none",
 		}),
-		letterSpacing: readNumberParam({
-			params: element.params,
+		letterSpacing: readAnimatedNumberParam({
+			element,
 			key: "letterSpacing",
 			fallback: DEFAULTS.text.letterSpacing,
+			localTime,
 		}),
-		lineHeight: readNumberParam({
-			params: element.params,
+		lineHeight: readAnimatedNumberParam({
+			element,
 			key: "lineHeight",
 			fallback: DEFAULTS.text.lineHeight,
+			localTime,
 		}),
 	};
 }

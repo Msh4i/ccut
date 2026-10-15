@@ -3,24 +3,15 @@ import {
 	ALL_FORMATS,
 	BlobSource,
 	VideoSampleSink,
-	type VideoCodec,
 } from "mediabunny";
 import { createTimelineAudioBuffer } from "@/media/audio";
 import type { SceneTracks } from "@/timeline";
 import type { MediaAsset } from "@/media/types";
 import { TICKS_PER_SECOND } from "@/wasm";
 import { renderThumbnailDataUrl } from "./thumbnail";
+import { probeVideo, type VideoFileData } from "./video-probe";
 
-export type VideoFileData = {
-	duration: number;
-	width: number;
-	height: number;
-	fps: number;
-	hasAudio: boolean;
-	codec: VideoCodec | null;
-	canDecode: boolean;
-	thumbnailUrl: string | null;
-};
+export type { VideoFileData } from "./video-probe";
 
 export async function readVideoFile({
 	file,
@@ -32,50 +23,25 @@ export async function readVideoFile({
 		formats: ALL_FORMATS,
 	});
 
-	try {
-		const duration = await input.computeDuration();
-		const videoTrack = await input.getPrimaryVideoTrack();
-
-		if (!videoTrack) {
-			throw new Error("No video track found in the file");
-		}
-
-		const canDecode = await videoTrack.canDecode();
-		const packetStats = await videoTrack.computePacketStats(100);
-		const audioTrack = await input.getPrimaryAudioTrack();
-
-		let thumbnailUrl: string | null = null;
-		if (canDecode) {
-			const sink = new VideoSampleSink(videoTrack);
+	return probeVideo({
+		input,
+		decodeThumbnail: async ({ track }) => {
+			const sink = new VideoSampleSink(track);
 			const frame = await sink.getSample(1);
-			if (frame) {
-				try {
-					thumbnailUrl = renderThumbnailDataUrl({
-						width: videoTrack.displayWidth,
-						height: videoTrack.displayHeight,
-						draw: ({ context, width, height }) => {
-							frame.draw(context, 0, 0, width, height);
-						},
-					});
-				} finally {
-					frame.close();
-				}
+			if (!frame) return null;
+			try {
+				return renderThumbnailDataUrl({
+					width: track.displayWidth,
+					height: track.displayHeight,
+					draw: ({ context, width, height }) => {
+						frame.draw(context, 0, 0, width, height);
+					},
+				});
+			} finally {
+				frame.close();
 			}
-		}
-
-		return {
-			duration,
-			width: videoTrack.displayWidth,
-			height: videoTrack.displayHeight,
-			fps: packetStats.averagePacketRate,
-			hasAudio: audioTrack !== null,
-			codec: videoTrack.codec,
-			canDecode,
-			thumbnailUrl,
-		};
-	} finally {
-		input.dispose();
-	}
+		},
+	});
 }
 
 const SAMPLE_RATE = 44100;
@@ -104,7 +70,9 @@ export const extractTimelineAudio = async ({
 
 	onProgress?.(10);
 
-	const audioBuffer = await createTimelineAudioBuffer({
+	// Transcription still ignores `skipped` (clips whose audio could not be read
+	// are just not transcribed). The export stops on them instead.
+	const { buffer: audioBuffer } = await createTimelineAudioBuffer({
 		tracks,
 		mediaAssets,
 		duration: totalDuration,

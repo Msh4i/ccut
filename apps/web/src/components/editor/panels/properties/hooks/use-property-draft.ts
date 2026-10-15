@@ -29,11 +29,6 @@ export function usePropertyDraft<T>({
 
 	return {
 		displayValue: isEditing ? draft : sourceDisplay,
-		scrubTo: (value: number) => {
-			const parsed = parse(String(value));
-			if (parsed !== null) onPreview(parsed);
-		},
-		commitScrub: onCommit,
 		onFocus: () => {
 			setIsEditing(true);
 			setDraft(sourceDisplay);

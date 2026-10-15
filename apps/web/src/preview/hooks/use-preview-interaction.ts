@@ -5,6 +5,7 @@ import { useShiftKey } from "@/hooks/use-shift-key";
 import { usePreviewViewport } from "@/preview/components/preview-viewport";
 import type { SnapLine } from "@/preview/preview-snap";
 import { registerCanceller } from "@/editor/cancel-interaction";
+import { cameraPinOps } from "@/preview/camera-pin-ops";
 import {
 	PreviewInteractionController,
 	type PreviewInteractionDeps,
@@ -59,6 +60,7 @@ export function usePreviewInteraction({
 			isMaskMode: () => isMaskMode,
 			onSnapLinesChange,
 		},
+		pins: cameraPinOps,
 	};
 	const depsRef = useCommittedRef(deps) as PreviewInteractionDepsRef;
 	const [controller] = useState(

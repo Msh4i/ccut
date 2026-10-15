@@ -8,6 +8,7 @@ import { generateUUID } from "@/utils/id";
 import { EditorCore } from "@/core";
 import { isRetimableElement } from "@/timeline";
 import { splitAnimationsAtTime } from "@/animation";
+import { splitPresetAnimations } from "@/animation/presets";
 import { getSourceSpanAtClipTime } from "@/retime";
 import {
 	addMediaTime,
@@ -117,6 +118,12 @@ export class SplitElementsCommand extends Command {
 					splitTime: relativeTime,
 					shouldIncludeSplitBoundary: true,
 				});
+				// Only elements that can carry presets have the field. The left half keeps
+				// the In animation, the right half the Out animation.
+				const presets =
+					"presetAnimations" in element
+						? splitPresetAnimations({ presetAnimations: element.presetAnimations })
+						: undefined;
 				let splitResult: TimelineElement[];
 
 				const leftTrimEnd = addMediaTime({
@@ -136,6 +143,7 @@ export class SplitElementsCommand extends Command {
 							trimEnd: leftTrimEnd,
 							name: `${element.name} (left)`,
 							animations: leftAnimations,
+							...(presets && { presetAnimations: presets.left }),
 							...(retimeRef !== undefined ? { retime: retimeRef } : {}),
 						},
 					];
@@ -154,6 +162,7 @@ export class SplitElementsCommand extends Command {
 							trimStart: rightTrimStart,
 							name: `${element.name} (right)`,
 							animations: rightAnimations,
+							...(presets && { presetAnimations: presets.right }),
 							...(retimeRef !== undefined ? { retime: retimeRef } : {}),
 						},
 					];
@@ -170,6 +179,7 @@ export class SplitElementsCommand extends Command {
 							trimEnd: leftTrimEnd,
 							name: `${element.name} (left)`,
 							animations: leftAnimations,
+							...(presets && { presetAnimations: presets.left }),
 							...(retimeRef !== undefined ? { retime: retimeRef } : {}),
 						},
 						{
@@ -180,6 +190,7 @@ export class SplitElementsCommand extends Command {
 							trimStart: rightTrimStart,
 							name: `${element.name} (right)`,
 							animations: rightAnimations,
+							...(presets && { presetAnimations: presets.right }),
 							...(retimeRef !== undefined ? { retime: retimeRef } : {}),
 						},
 					];

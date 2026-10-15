@@ -1,11 +1,54 @@
 import { createCanvasSurface } from "./canvas-utils";
 import { effectsRegistry, resolveEffectPasses } from "@/effects";
+import type { EffectPass } from "@/effects/types";
 import { buildDefaultParamValues } from "@/params/registry";
 import type { ParamValues } from "@/params";
+import { wasmCompositor } from "./compositor/wasm-compositor";
 import { gpuRenderer } from "./gpu-renderer";
 
 const PREVIEW_SIZE = 160;
 const PREVIEW_IMAGE_PATH = "/effects/preview.jpg";
+
+/**
+ * Runs a thumbnail's effect passes on the GPU.
+ *
+ * On the WebGL fallback wgpu can only present through the one canvas its GL
+ * context was made on, and that canvas is also the compositor's output canvas
+ * mounted in the preview (rust/wasm/src/compositor.rs, initCompositor): the
+ * thumbnail resizes it and draws into it. The compositor is told, so the
+ * preview draws its frame again (the compositor puts its size back first). On
+ * WebGPU the thumbnail has a canvas of its own and this costs one redraw.
+ */
+export function applyThumbnailEffect({
+	source,
+	width,
+	height,
+	passes,
+	gpu = gpuRenderer,
+	compositor = wasmCompositor,
+}: {
+	source: OffscreenCanvas;
+	width: number;
+	height: number;
+	passes: EffectPass[];
+	gpu?: Pick<typeof gpuRenderer, "applyEffect">;
+	compositor?: Pick<typeof wasmCompositor, "noteCanvasDisturbed">;
+}): OffscreenCanvas {
+	try {
+		return gpu.applyEffect({ source, width, height, passes });
+	} finally {
+		if (passes.length > 0) {
+			compositor.noteCanvasDisturbed();
+		}
+	}
+}
+
+/**
+ * Length of the hover loop in the Assets grid, and the effect duration the
+ * thumbnail pretends to have. 4 s fits one full sweep of the slowest effect
+ * (Light leak) and replays the one-shot ones (Flash, Punch zoom) each loop.
+ */
+export const EFFECT_PREVIEW_LOOP_SECONDS = 4;
 
 class EffectPreviewService {
 	private testSourceCanvas: OffscreenCanvas | null = null;
@@ -28,11 +71,14 @@ class EffectPreviewService {
 		params,
 		targetCanvas,
 		uniformDimensions,
+		localTimeSeconds,
 	}: {
 		effectType: string;
 		params: ParamValues;
 		targetCanvas: HTMLCanvasElement;
 		uniformDimensions?: { width: number; height: number };
+		/** Defaults to the effect's own still-thumbnail moment. */
+		localTimeSeconds?: number;
 	}): void {
 		const size = PREVIEW_SIZE;
 		const targetCtx = targetCanvas.getContext(
@@ -63,8 +109,11 @@ class EffectPreviewService {
 				effectParams: resolvedParams,
 				width: uniformDimensions?.width ?? size,
 				height: uniformDimensions?.height ?? size,
+				localTimeSeconds:
+					localTimeSeconds ?? definition.previewTimeSeconds ?? 0,
+				durationSeconds: EFFECT_PREVIEW_LOOP_SECONDS,
 			});
-			const result = this.applyGpuEffect({
+			const result = applyThumbnailEffect({
 				source,
 				width: size,
 				height: size,
@@ -126,25 +175,6 @@ class EffectPreviewService {
 			this.testSourceCanvas = this.createTestSource({ width, height });
 		}
 		return this.testSourceCanvas;
-	}
-
-	private applyGpuEffect({
-		source,
-		width,
-		height,
-		passes,
-	}: {
-		source: OffscreenCanvas;
-		width: number;
-		height: number;
-		passes: ReturnType<typeof resolveEffectPasses>;
-	}): OffscreenCanvas {
-		return gpuRenderer.applyEffect({
-			source,
-			width,
-			height,
-			passes,
-		});
 	}
 }
 

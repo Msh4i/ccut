@@ -11,7 +11,6 @@ import {
 	Delete02Icon,
 	PlusSignIcon,
 } from "@hugeicons/core-free-icons";
-import { getBezierPoint } from "@/animation/bezier";
 import type { NormalizedCubicBezier } from "@/animation/types";
 import type { GraphEditorComponentOption } from "./session";
 import {
@@ -21,13 +20,9 @@ import {
 } from "./easing-presets";
 import { removePreset, savePreset, useCustomPresets } from "./custom-presets-store";
 import { BezierGraph, BEZIER_GRAPH_MIN_HEIGHT } from "./bezier-graph";
+import { CurveThumb } from "./curve-thumb";
 
 const COLLAPSED_MAX = 6;
-const THUMB_SEGMENTS = 24;
-const THUMB_WIDTH = 40;
-const THUMB_HEIGHT = 22;
-const THUMB_PADDING_X = 4;
-const THUMB_PADDING_Y = 3;
 const COLLAPSED_GRID_MAX_HEIGHT = 120;
 const EXPANDED_GRID_MAX_HEIGHT = 240;
 
@@ -296,39 +291,5 @@ function PresetItem({
 				</Button>
 			)}
 		</button>
-	);
-}
-
-function toThumbX({ value }: { value: number }) {
-	return THUMB_PADDING_X + value * (THUMB_WIDTH - THUMB_PADDING_X * 2);
-}
-
-function toThumbY({ value }: { value: number }) {
-	return THUMB_PADDING_Y + (1 - value) * (THUMB_HEIGHT - THUMB_PADDING_Y * 2);
-}
-
-function CurveThumb({ value }: { value: NormalizedCubicBezier }) {
-	const points: string[] = [];
-	for (let i = 0; i <= THUMB_SEGMENTS; i++) {
-		const progress = i / THUMB_SEGMENTS;
-		const x = toThumbX({ value: getBezierPoint({ progress, p0: 0, p1: value[0], p2: value[2], p3: 1 }) });
-		const y = toThumbY({ value: getBezierPoint({ progress, p0: 0, p1: value[1], p2: value[3], p3: 1 }) });
-		points.push(`${x},${y}`);
-	}
-	return (
-		<svg
-			width={THUMB_WIDTH}
-			height={THUMB_HEIGHT}
-			viewBox={`0 0 ${THUMB_WIDTH} ${THUMB_HEIGHT}`}
-		>
-			<title>Curve preset preview</title>
-			<path
-				d={`M${points.join("L")}`}
-				fill="none"
-				className="stroke-current"
-				strokeWidth={1.5}
-				strokeLinecap="round"
-			/>
-		</svg>
 	);
 }

@@ -2,7 +2,12 @@ import { generateUUID } from "@/utils/id";
 import { buildDefaultParamValues } from "@/params/registry";
 import { effectsRegistry } from "./registry";
 import type { ParamValues } from "@/params";
-import type { Effect, EffectDefinition, EffectPass } from "@/effects/types";
+import type {
+	Effect,
+	EffectDefinition,
+	EffectPass,
+	EffectPassContext,
+} from "@/effects/types";
 import { VISUAL_ELEMENT_TYPES } from "@/timeline";
 
 export { effectsRegistry } from "./registry";
@@ -10,21 +15,14 @@ export { registerDefaultEffects } from "./definitions";
 
 export function resolveEffectPasses({
 	definition,
-	effectParams,
-	width,
-	height,
-}: {
-	definition: EffectDefinition;
-	effectParams: ParamValues;
-	width: number;
-	height: number;
-}): EffectPass[] {
+	...context
+}: { definition: EffectDefinition } & EffectPassContext): EffectPass[] {
 	if (definition.renderer.buildPasses) {
-		return definition.renderer.buildPasses({ effectParams, width, height });
+		return definition.renderer.buildPasses(context);
 	}
 	return definition.renderer.passes.map((pass) => ({
 		shader: pass.shader,
-		uniforms: pass.uniforms({ effectParams, width, height }),
+		uniforms: pass.uniforms(context),
 	}));
 }
 

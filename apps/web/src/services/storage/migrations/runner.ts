@@ -38,86 +38,98 @@ export async function runStorageMigrations({
 		hasCleanedUpMetaDb = true;
 	}
 
-	const projectsAdapter = new IndexedDBAdapter<ProjectRecord>(
-		"video-editor-projects",
-		"projects",
-		1,
-	);
-
-	const projects = await projectsAdapter.getAll();
-
-	const orderedMigrations = [...migrations].sort((a, b) => a.from - b.from);
 	let migratedCount = 0;
 	let migrationStartTime: number | null = null;
 
-	for (const project of projects) {
-		if (typeof project !== "object" || project === null) {
-			continue;
-		}
-
-		let projectRecord = project as ProjectRecord;
-		const projectId = getProjectId({ project: projectRecord });
-		if (!projectId) {
-			continue;
-		}
-
-		let currentVersion = getProjectVersion({ project: projectRecord });
-		const targetVersion = orderedMigrations.at(-1)?.to ?? currentVersion;
-
-		if (currentVersion >= targetVersion) {
-			continue;
-		}
-
-		// Track when we first showed the migration dialog
-		if (migrationStartTime === null) {
-			migrationStartTime = Date.now();
-		}
-
-		const projectName = getProjectName({ project: projectRecord });
-		onProgress?.({
-			isMigrating: true,
-			fromVersion: currentVersion,
-			toVersion: targetVersion,
-			projectName,
+	try {
+		const projectsAdapter = new IndexedDBAdapter<ProjectRecord>({
+			dbName: "video-editor-projects",
+			storeName: "projects",
+			version: 1,
 		});
 
-		for (const migration of orderedMigrations) {
-			if (migration.from !== currentVersion) {
+		const projects = await projectsAdapter.getAll();
+
+		const orderedMigrations = [...migrations].sort((a, b) => a.from - b.from);
+
+		for (const project of projects) {
+			if (typeof project !== "object" || project === null) {
 				continue;
 			}
 
-			const result = await migration.run({
-				projectId,
-				project: projectRecord,
-			});
-
-			if (result.skipped) {
-				break;
+			let projectRecord = project as ProjectRecord;
+			const projectId = getProjectId({ project: projectRecord });
+			if (!projectId) {
+				continue;
 			}
 
-			await projectsAdapter.set(projectId, result.project);
-			migratedCount++;
-			currentVersion = migration.to;
-			projectRecord = result.project;
-		}
-	}
+			let currentVersion = getProjectVersion({ project: projectRecord });
+			const targetVersion = orderedMigrations.at(-1)?.to ?? currentVersion;
 
-	// Ensure dialog is visible for minimum time so users can see it
-	if (migrationStartTime !== null) {
-		const elapsed = Date.now() - migrationStartTime;
-		if (elapsed < MIN_MIGRATION_DISPLAY_MS) {
-			await new Promise((resolve) =>
-				setTimeout(resolve, MIN_MIGRATION_DISPLAY_MS - elapsed),
-			);
-		}
-	}
+			if (currentVersion >= targetVersion) {
+				continue;
+			}
 
-	onProgress?.({
-		isMigrating: false,
-		fromVersion: null,
-		toVersion: null,
-		projectName: null,
-	});
+			// Track when we first showed the migration dialog
+			if (migrationStartTime === null) {
+				migrationStartTime = Date.now();
+			}
+
+			const projectName = getProjectName({ project: projectRecord });
+			onProgress?.({
+				isMigrating: true,
+				fromVersion: currentVersion,
+				toVersion: targetVersion,
+				projectName,
+			});
+
+			try {
+				for (const migration of orderedMigrations) {
+					if (migration.from !== currentVersion) {
+						continue;
+					}
+
+					const result = await migration.run({
+						projectId,
+						project: projectRecord,
+					});
+
+					if (result.skipped) {
+						break;
+					}
+
+					await projectsAdapter.set({ key: projectId, value: result.project });
+					migratedCount++;
+					currentVersion = migration.to;
+					projectRecord = result.project;
+				}
+			} catch (error) {
+				// Each step is persisted, so the project stays at its last saved version.
+				console.error(
+					`Storage migration failed for project ${projectId} at v${currentVersion}:`,
+					error,
+				);
+				continue;
+			}
+		}
+
+		// Ensure dialog is visible for minimum time so users can see it
+		if (migrationStartTime !== null) {
+			const elapsed = Date.now() - migrationStartTime;
+			if (elapsed < MIN_MIGRATION_DISPLAY_MS) {
+				await new Promise((resolve) =>
+					setTimeout(resolve, MIN_MIGRATION_DISPLAY_MS - elapsed),
+				);
+			}
+		}
+	} finally {
+		onProgress?.({
+			isMigrating: false,
+			fromVersion: null,
+			toVersion: null,
+			projectName: null,
+		});
+	}
 
 	return { migratedCount };
 }

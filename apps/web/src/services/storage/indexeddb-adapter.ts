@@ -22,9 +22,34 @@ export class IndexedDBAdapter<T> implements StorageAdapter<T> {
 	private async getDB(): Promise<IDBDatabase> {
 		return new Promise((resolve, reject) => {
 			const request = indexedDB.open(this.dbName, this.version);
+			let isSettled = false;
 
-			request.onerror = () => reject(request.error);
-			request.onsuccess = () => resolve(request.result);
+			request.onerror = () => {
+				isSettled = true;
+				reject(request.error);
+			};
+			// Another connection (an old tab) holds the database and blocks the open.
+			request.onblocked = () => {
+				isSettled = true;
+				reject(
+					new DOMException(
+						`Opening "${this.dbName}" is blocked by another tab.`,
+						"InvalidStateError",
+					),
+				);
+			};
+			request.onsuccess = () => {
+				const db = request.result;
+				if (isSettled) {
+					// The caller already gave up on this open: do not keep the connection.
+					db.close();
+					return;
+				}
+				isSettled = true;
+				// Let another tab upgrade or delete the database.
+				db.onversionchange = () => db.close();
+				resolve(db);
+			};
 
 			request.onupgradeneeded = (event) => {
 				const db = (event.target as IDBOpenDBRequest).result;
@@ -35,16 +60,57 @@ export class IndexedDBAdapter<T> implements StorageAdapter<T> {
 		});
 	}
 
-	async get(key: string): Promise<T | null> {
+	// One connection and one transaction per operation. Settles when the
+	// transaction does, not when the request does: a full disk or quota only
+	// shows up when the transaction commits, after the request reported success.
+	// The connection is always released.
+	private async run<R>({
+		mode,
+		operation,
+	}: {
+		mode: IDBTransactionMode;
+		operation: (store: IDBObjectStore) => IDBRequest<R>;
+	}): Promise<R> {
 		const db = await this.getDB();
-		const transaction = db.transaction([this.storeName], "readonly");
-		const store = transaction.objectStore(this.storeName);
 
-		return new Promise((resolve, reject) => {
-			const request = store.get(key);
-			request.onerror = () => reject(request.error);
-			request.onsuccess = () => resolve(request.result || null);
+		return new Promise<R>((resolve, reject) => {
+			let result: { value: R } | null = null;
+			try {
+				const transaction = db.transaction([this.storeName], mode);
+				transaction.oncomplete = () => {
+					db.close();
+					if (result) {
+						resolve(result.value);
+					} else {
+						reject(new DOMException("No result", "UnknownError"));
+					}
+				};
+				transaction.onabort = () => {
+					db.close();
+					reject(
+						transaction.error ??
+							new DOMException("The transaction was aborted", "AbortError"),
+					);
+				};
+
+				const request = operation(transaction.objectStore(this.storeName));
+				request.onsuccess = () => {
+					result = { value: request.result };
+				};
+				request.onerror = () => reject(request.error);
+			} catch (error) {
+				db.close();
+				reject(error);
+			}
 		});
+	}
+
+	async get(key: string): Promise<T | null> {
+		const result = await this.run<T | undefined>({
+			mode: "readonly",
+			operation: (store) => store.get(key),
+		});
+		return result || null;
 	}
 
 	async set({
@@ -54,62 +120,39 @@ export class IndexedDBAdapter<T> implements StorageAdapter<T> {
 		key: string;
 		value: T;
 	}): Promise<void> {
-		const db = await this.getDB();
-		const transaction = db.transaction([this.storeName], "readwrite");
-		const store = transaction.objectStore(this.storeName);
-
-		return new Promise((resolve, reject) => {
-			const request = store.put({ id: key, ...value });
-			request.onerror = () => reject(request.error);
-			request.onsuccess = () => resolve();
+		await this.run({
+			mode: "readwrite",
+			operation: (store) => store.put({ id: key, ...value }),
 		});
 	}
 
 	async remove(key: string): Promise<void> {
-		const db = await this.getDB();
-		const transaction = db.transaction([this.storeName], "readwrite");
-		const store = transaction.objectStore(this.storeName);
-
-		return new Promise((resolve, reject) => {
-			const request = store.delete(key);
-			request.onerror = () => reject(request.error);
-			request.onsuccess = () => resolve();
+		await this.run({
+			mode: "readwrite",
+			operation: (store) => store.delete(key),
 		});
 	}
 
 	async list(): Promise<string[]> {
-		const db = await this.getDB();
-		const transaction = db.transaction([this.storeName], "readonly");
-		const store = transaction.objectStore(this.storeName);
-
-		return new Promise((resolve, reject) => {
-			const request = store.getAllKeys();
-			request.onerror = () => reject(request.error);
-			request.onsuccess = () => resolve(request.result as string[]);
+		const keys = await this.run({
+			mode: "readonly",
+			operation: (store) => store.getAllKeys(),
 		});
+		return keys as string[];
 	}
 
 	async getAll(): Promise<T[]> {
-		const db = await this.getDB();
-		const transaction = db.transaction([this.storeName], "readonly");
-		const store = transaction.objectStore(this.storeName);
-
-		return new Promise((resolve, reject) => {
-			const request = store.getAll();
-			request.onerror = () => reject(request.error);
-			request.onsuccess = () => resolve(request.result || []);
+		const items = await this.run({
+			mode: "readonly",
+			operation: (store) => store.getAll(),
 		});
+		return items || [];
 	}
 
 	async clear(): Promise<void> {
-		const db = await this.getDB();
-		const transaction = db.transaction([this.storeName], "readwrite");
-		const store = transaction.objectStore(this.storeName);
-
-		return new Promise((resolve, reject) => {
-			const request = store.clear();
-			request.onerror = () => reject(request.error);
-			request.onsuccess = () => resolve();
+		await this.run({
+			mode: "readwrite",
+			operation: (store) => store.clear(),
 		});
 	}
 }
