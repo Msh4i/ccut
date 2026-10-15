@@ -1,0 +1,69 @@
+# Builds the Windows desktop app (NSIS installer + portable zip) on a Windows
+# runner. A pushed tag `v*` attaches both files to that tag's GitHub Release;
+# a manual run only uploads them as workflow artifacts.
+name: Release (Windows)
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@735343b667d3e6f658f44d0eca948eb6282f2b76
+        with:
+          bun-version: 1.2.18
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # Builds apps/web as a standalone Next.js server and vendors what the
+      # main process needs (mediabunny, MCP SDK).
+      - name: Bundle the web app
+        working-directory: apps/electron
+        run: node bundle.js
+
+      - name: Package (NSIS installer + zip)
+        working-directory: apps/electron
+        env:
+          # No code-signing certificate: build an unsigned app.
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: npx --no-install electron-builder --win --publish never
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ccut-windows
+          path: |
+            apps/electron/dist/*.exe
+            apps/electron/dist/*.zip
+          if-no-files-found: error
+
+      - name: Attach to the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          shopt -s nullglob
+          files=(apps/electron/dist/*.exe apps/electron/dist/*.zip)
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "Ccut $TAG" --prerelease --notes-file .github/release-notes.md
+          fi
+          gh release upload "$TAG" "${files[@]}" --clobber
